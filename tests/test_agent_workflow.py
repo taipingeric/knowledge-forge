@@ -94,6 +94,31 @@ def test_agent_budget_stops_repairs(tmp_path: Path, monkeypatch: pytest.MonkeyPa
             agent.plan("auto", [])
 
 
+def test_reasoning_agent_forces_responses_api_without_storage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_model(**kwargs: object) -> object:
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(agent_module, "ChatOpenAI", fake_model)
+    with PageIndex(tmp_path / "pages.sqlite") as index:
+        index.add([pdf()])
+        ReasoningAgent(
+            index=index,
+            sources=[pdf()],
+            model="fake",
+            api_key="secret",
+            base_url="https://models.example/v1",
+            max_steps=5,
+        )
+
+    assert captured["use_responses_api"] is True
+    assert captured["store"] is False
+
+
 class FakeReasoningAgent:
     def plan(self, language: str, existing_ids: list[str]) -> ConceptPlan:
         return ConceptPlan(

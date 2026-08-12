@@ -8,13 +8,13 @@ Knowledge Forge 將團隊核准的 PDF 文件整理成符合 Google Open Knowled
 
 - 輸入：指定目錄內遞迴發現、具有完整文字層的 PDF。
 - 輸出：OKF 0.2 Markdown Bundle；不包含 Web UI、聊天、RAG API 或原始 PDF。
-- 模型：支援 tool calling 的 OpenAI-compatible endpoint。
+- 模型：透過 Responses API 呼叫支援 tool calling 的 OpenAI-compatible endpoint；不使用 Chat Completions。
 - Retrieval：每次執行建立暫存 SQLite FTS5 page index，結束後刪除。
 - Concept types：`Concept`、`Definition`、`Policy`、`Procedure`、`FAQ`。
 
 純掃描 PDF、加密 PDF、損壞文件、整份沒有可擷取文字、symlink 及正規化後路徑碰撞，都會讓整次操作原子失敗。具有文字內容的 PDF 可以包含刻意留白的頁面。
 
-PDF 內容被視為不可信資料，agent 沒有 shell、network 或任意檔案寫入工具。擷取出的 PDF 文字會送往設定的模型 endpoint；Knowledge Forge 不會把 PDF、擷取全文或 API key 寫入 Bundle。為避免內容被額外傳送，偵測到 LangSmith／LangChain tracing 開啟時會拒絕執行。
+PDF 內容被視為不可信資料，agent 沒有 shell、network 或任意檔案寫入工具。擷取出的 PDF 文字會送往設定的模型 endpoint；Knowledge Forge 不會把 PDF、擷取全文或 API key 寫入 Bundle。模型請求固定使用 Responses API 並設定 `store: false`。為避免內容被額外傳送，偵測到 LangSmith／LangChain tracing 開啟時會拒絕執行。
 
 ## 安裝
 
@@ -40,6 +40,8 @@ OPENAI_BASE_URL=https://models.example/v1
 ```
 
 Knowledge Forge 只讀取執行命令時所在目錄的 `.env`，不會向父目錄搜尋。CLI 參數與既有 process environment 優先於 `.env`，因此 CI、container 或 secret manager 注入的設定不會被本機檔案覆蓋。
+
+自訂 `OPENAI_BASE_URL` 必須相容 OpenAI Responses API（`/v1/responses`）、function calling 與 structured tool output；只有 `/v1/chat/completions` 的服務無法使用。
 
 也可以直接使用 process environment：
 

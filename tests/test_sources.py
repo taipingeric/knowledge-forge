@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -30,3 +31,28 @@ def test_page_index_searches_and_reads(tmp_path: Path) -> None:
 def test_page_index_rejects_invalid_fts_query(tmp_path: Path) -> None:
     with PageIndex(tmp_path / "pages.sqlite") as index, pytest.raises(ValidationFailure):
         index.search('"unterminated')
+
+
+def test_page_index_can_be_queried_from_agent_worker_thread(tmp_path: Path) -> None:
+    from knowledge_forge.models import PDFSource, SourcePage
+
+    source = PDFSource(
+        id="handbook.pdf",
+        resource=logical_resource("handbook.pdf"),
+        content_sha256=sha256_text("pdf"),
+        pages=[SourcePage(number=1, text="Refunds take seven business days.")],
+    )
+    with PageIndex(tmp_path / "pages.sqlite") as index:
+        index.add([source])
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = [
+                future
+                for _ in range(4)
+                for future in (
+                    executor.submit(index.search, "refunds"),
+                    executor.submit(index.read, "handbook.pdf", [1]),
+                )
+            ]
+            results = [future.result() for future in futures]
+
+    assert all(result[0]["page"] == 1 for result in results)

@@ -96,26 +96,36 @@ class PageIndex:
     """Ephemeral page-oriented full-text index."""
 
     def __init__(self, database: Path) -> None:
-        self._connection = sqlite3.connect(database)
-        self._connection.execute(
-            "CREATE VIRTUAL TABLE pages USING fts5(source_id UNINDEXED, page UNINDEXED, text)"
-        )
+        self._database = database
+        with self._connect() as connection:
+            connection.execute(
+                "CREATE VIRTUAL TABLE pages USING fts5(source_id UNINDEXED, page UNINDEXED, text)"
+            )
+
+    def _connect(self) -> sqlite3.Connection:
+        """Create a connection owned by the calling thread."""
+        return sqlite3.connect(self._database)
 
     def add(self, sources: list[PDFSource]) -> None:
-        self._connection.executemany(
-            "INSERT INTO pages(source_id, page, text) VALUES (?, ?, ?)",
-            [(source.id, page.number, page.text) for source in sources for page in source.pages],
-        )
-        self._connection.commit()
+        with self._connect() as connection:
+            connection.executemany(
+                "INSERT INTO pages(source_id, page, text) VALUES (?, ?, ?)",
+                [
+                    (source.id, page.number, page.text)
+                    for source in sources
+                    for page in source.pages
+                ],
+            )
 
     def search(self, query: str, limit: int = 10) -> list[dict[str, object]]:
         limit = min(max(limit, 1), 25)
         try:
-            rows = self._connection.execute(
-                "SELECT source_id, page, snippet(pages, 2, '[', ']', ' … ', 32) "
-                "FROM pages WHERE pages MATCH ? ORDER BY rank LIMIT ?",
-                (query, limit),
-            ).fetchall()
+            with self._connect() as connection:
+                rows = connection.execute(
+                    "SELECT source_id, page, snippet(pages, 2, '[', ']', ' … ', 32) "
+                    "FROM pages WHERE pages MATCH ? ORDER BY rank LIMIT ?",
+                    (query, limit),
+                ).fetchall()
         except sqlite3.OperationalError as exc:
             raise ValidationFailure(f"Invalid full-text search query: {query!r}") from exc
         return [{"source_id": row[0], "page": int(row[1]), "snippet": row[2]} for row in rows]
@@ -124,15 +134,16 @@ class PageIndex:
         if not pages:
             return []
         placeholders = ",".join("?" for _ in pages)
-        rows = self._connection.execute(
-            f"SELECT source_id, page, text FROM pages "  # noqa: S608 - placeholders below
-            f"WHERE source_id = ? AND page IN ({placeholders}) ORDER BY page",
-            (source_id, *pages),
-        ).fetchall()
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"SELECT source_id, page, text FROM pages "  # noqa: S608 - placeholders below
+                f"WHERE source_id = ? AND page IN ({placeholders}) ORDER BY page",
+                (source_id, *pages),
+            ).fetchall()
         return [{"source_id": row[0], "page": int(row[1]), "text": row[2]} for row in rows]
 
     def close(self) -> None:
-        self._connection.close()
+        """Retained for the context-manager API; connections are operation-scoped."""
 
     def __enter__(self) -> PageIndex:
         return self

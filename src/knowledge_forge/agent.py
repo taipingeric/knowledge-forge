@@ -73,6 +73,8 @@ class ReasoningAgent:
             model=model,
             api_key=api_key,
             base_url=base_url,
+            use_responses_api=True,
+            store=False,
             temperature=0,
             max_retries=0,
         )
