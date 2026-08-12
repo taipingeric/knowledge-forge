@@ -12,7 +12,9 @@ Knowledge Forge 將團隊核准的 PDF 文件整理成符合 Google Open Knowled
 - Retrieval：每次執行建立暫存 SQLite FTS5 page index，結束後刪除。
 - Concept types：`Concept`、`Definition`、`Policy`、`Procedure`、`FAQ`。
 
-掃描 PDF、加密 PDF、損壞文件、空白頁、symlink 及正規化後路徑碰撞都會讓整次操作原子失敗。PDF 內容被視為不可信資料，agent 沒有 shell、network 或任意檔案寫入工具。為避免額外資料外洩，Knowledge Forge 偵測到 LangSmith／LangChain tracing 開啟時會拒絕執行。
+純掃描 PDF、加密 PDF、損壞文件、整份沒有可擷取文字、symlink 及正規化後路徑碰撞，都會讓整次操作原子失敗。具有文字內容的 PDF 可以包含刻意留白的頁面。
+
+PDF 內容被視為不可信資料，agent 沒有 shell、network 或任意檔案寫入工具。擷取出的 PDF 文字會送往設定的模型 endpoint；Knowledge Forge 不會把 PDF、擷取全文或 API key 寫入 Bundle。為避免內容被額外傳送，偵測到 LangSmith／LangChain tracing 開啟時會拒絕執行。
 
 ## 安裝
 
@@ -32,6 +34,18 @@ export OPENAI_MODEL=...
 
 ## CLI
 
+`generate` 與 `update` 的 model 和 endpoint 也可以在命令列明確傳入：
+
+```bash
+uv run knowledge-forge generate \
+  --source ./pdfs \
+  --out ./knowledge \
+  --model <model> \
+  --base-url https://models.example/v1
+```
+
+雖然 CLI 也接受 `--api-key`，仍建議使用 `OPENAI_API_KEY`，避免 credential 留在 shell history。
+
 建立新的 Bundle；`--out` 必須不存在或為空目錄：
 
 ```bash
@@ -42,7 +56,7 @@ uv run knowledge-forge generate \
   --max-agent-steps 50
 ```
 
-以完整、權威的目前 PDF 集合更新：
+以完整、權威的目前 PDF 集合更新。`--source` 不是「本次變更的檔案」，而是 Wiki 當下應採用的全部 PDF：
 
 ```bash
 uv run knowledge-forge update \
@@ -52,11 +66,15 @@ uv run knowledge-forge update \
 
 來源、Bundle、state 與 generation identity 全部未變時，`update` 不呼叫模型也不寫入任何檔案。人工可以修改 Concept 正文及 `type`、`title`、`description`、`tags`、`status`；不可直接修改 `generated`、`sources`、hash、page mapping、`verified`、`index.md`、`log.md` 或 `.knowledge-forge/`。
 
+人工新增在 `concepts/` 下且符合命名規則的文件，會在下一次 mutation 中登記為永久 `human-owned`。一般 `update` 不會重寫、刪除或接管這些文件；MVP 尚未提供 ownership adoption command。
+
 執行 deterministic validation，不呼叫模型或修改檔案：
 
 ```bash
 uv run knowledge-forge validate --out ./knowledge --source ./pdfs
 ```
+
+省略 `--source` 時，只驗證 Bundle、provenance 格式、citations、baseline 與 private state 的內部一致性；加上 `--source` 後，還會核對完整 PDF 集合、實際 SHA-256 與頁碼邊界。
 
 為目前 Concept 版本加入人工 verification：
 
@@ -100,6 +118,12 @@ uv run knowledge-forge reconcile \
 
 任何 live Bundle、source set、pending candidate 或 generation identity 已變動，都會拒絕套用過期 resolution。成功後 pending workspace 會刪除，resolved Markdown report 保留供稽核。
 
+## Exit codes
+
+- `0`：成功；包含 `update` 的 deterministic `No changes`。
+- `2`：來源、Bundle、state、模型輸出或操作參數驗證失敗。
+- `3`：`update` 需要人工 reconciliation；live Bundle 保持不變。
+
 ## Bundle 與 provenance
 
 ```text
@@ -111,6 +135,8 @@ knowledge/
     state.json
     baseline/<concept-id>.json
 ```
+
+`.knowledge-forge/state.json` 保存 workflow/generation identity、source dependencies、ownership、overrides 與 verification audit，並以 deterministic checksum 偵測意外修改。`baseline/` 使用 JSON 包裝完整 agent Markdown，避免被 OKF 誤認為公開 Concept Document。這兩者都是 tool-managed state，不應人工編輯。
 
 每個 source entry 使用 durable logical URN，並公開記錄內容 hash 與頁碼：
 
