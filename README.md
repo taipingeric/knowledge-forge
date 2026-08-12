@@ -1,2 +1,135 @@
-# knowledge-forge
-An agentic knowledge system that researches sources, generates structured knowledge, validates it, and keeps it up to date.
+# Knowledge Forge
+
+Knowledge Forge 將團隊核准的 PDF 文件整理成符合 Google Open Knowledge Format 0.2 的 Wiki。它使用 LangGraph 編排固定 workflow，並讓單一 LangChain reasoning agent 負責跨文件的 concept planning 與 synthesis。
+
+輸出的 Bundle 同時由 agent 與人維護：人工修改不會在下一次更新時被靜默覆蓋。非重疊變更會以 deterministic three-way merge 合併；同一結構區塊的衝突則維持 live Bundle 不變，產生可稽核的 reconciliation workspace。
+
+## MVP 範圍
+
+- 輸入：指定目錄內遞迴發現、具有完整文字層的 PDF。
+- 輸出：OKF 0.2 Markdown Bundle；不包含 Web UI、聊天、RAG API 或原始 PDF。
+- 模型：支援 tool calling 的 OpenAI-compatible endpoint。
+- Retrieval：每次執行建立暫存 SQLite FTS5 page index，結束後刪除。
+- Concept types：`Concept`、`Definition`、`Policy`、`Procedure`、`FAQ`。
+
+掃描 PDF、加密 PDF、損壞文件、空白頁、symlink 及正規化後路徑碰撞都會讓整次操作原子失敗。PDF 內容被視為不可信資料，agent 沒有 shell、network 或任意檔案寫入工具。為避免額外資料外洩，Knowledge Forge 偵測到 LangSmith／LangChain tracing 開啟時會拒絕執行。
+
+## 安裝
+
+需要 Python 3.12 與 [uv](https://docs.astral.sh/uv/)：
+
+```bash
+uv sync
+```
+
+模型名稱必須明確指定，API key 不會寫入 Bundle 或 state：
+
+```bash
+export OPENAI_API_KEY=...
+export OPENAI_MODEL=...
+# 選用：export OPENAI_BASE_URL=https://models.example/v1
+```
+
+## CLI
+
+建立新的 Bundle；`--out` 必須不存在或為空目錄：
+
+```bash
+uv run knowledge-forge generate \
+  --source ./pdfs \
+  --out ./knowledge \
+  --language auto \
+  --max-agent-steps 50
+```
+
+以完整、權威的目前 PDF 集合更新：
+
+```bash
+uv run knowledge-forge update \
+  --source ./pdfs \
+  --out ../knowledge-base
+```
+
+來源、Bundle、state 與 generation identity 全部未變時，`update` 不呼叫模型也不寫入任何檔案。人工可以修改 Concept 正文及 `type`、`title`、`description`、`tags`、`status`；不可直接修改 `generated`、`sources`、hash、page mapping、`verified`、`index.md`、`log.md` 或 `.knowledge-forge/`。
+
+執行 deterministic validation，不呼叫模型或修改檔案：
+
+```bash
+uv run knowledge-forge validate --out ./knowledge --source ./pdfs
+```
+
+為目前 Concept 版本加入人工 verification：
+
+```bash
+uv run knowledge-forge verify \
+  --source ./pdfs \
+  --out ./knowledge \
+  --concept concepts/refund-policy.md \
+  --by human:reviewer-id
+```
+
+Concept 的語意內容、策展 metadata 或相關 evidence 改變後，active `verified` 會被移除；歷史事件仍保留在 audit state。
+
+## Reconciliation
+
+無法安全合併時，`update` 回傳 exit code 3，保留 live Bundle，並建立：
+
+```text
+knowledge.reconciliation.md
+knowledge.reconciliation/
+  manifest.json
+  resolution.yaml
+  pending/
+  manual/
+```
+
+在 `resolution.yaml` 為每個 conflict 選擇：
+
+- `keep-human`：建立綁定 human block 與 evidence hash 的 conditional override。
+- `use-source`：採用既有 candidate block，不重新呼叫模型。
+- `manual`：編輯 `manual/` 內的 Concept，並讓 `artifact` 指向該檔案。
+
+完成後執行：
+
+```bash
+uv run knowledge-forge reconcile \
+  --source ./pdfs \
+  --out ./knowledge \
+  --resolution ./knowledge.reconciliation/resolution.yaml
+```
+
+任何 live Bundle、source set、pending candidate 或 generation identity 已變動，都會拒絕套用過期 resolution。成功後 pending workspace 會刪除，resolved Markdown report 保留供稽核。
+
+## Bundle 與 provenance
+
+```text
+knowledge/
+  index.md
+  log.md
+  concepts/<stable-kebab-case-slug>.md
+  .knowledge-forge/
+    state.json
+    baseline/<concept-id>.json
+```
+
+每個 source entry 使用 durable logical URN，並公開記錄內容 hash 與頁碼：
+
+```yaml
+sources:
+  - id: policies/refunds.pdf
+    resource: urn:knowledge-forge:pdf:policies%2Frefunds.pdf
+    content_sha256: <sha256>
+    pages: [2-4, "7"]
+```
+
+重大、爭議、數字、政策或版本敏感陳述使用 page-level footnote，例如 `[^policies/refunds.pdf@p3]`，並在正文加入同 label 的 footnote definition。
+
+## 開發
+
+```bash
+uv run ruff check src tests
+uv run ruff format --check src tests
+uv run pytest
+```
+
+架構取捨記錄在 [`docs/adr/`](docs/adr/)，領域語言記錄在 [`CONTEXT.md`](CONTEXT.md)。
