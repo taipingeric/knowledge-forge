@@ -27,6 +27,23 @@ uv sync
 模型名稱必須明確指定，API key 不會寫入 Bundle 或 state：
 
 ```bash
+cp .env.example .env
+```
+
+編輯目前工作目錄的 `.env`：
+
+```dotenv
+OPENAI_API_KEY=...
+OPENAI_MODEL=...
+# 選用：
+OPENAI_BASE_URL=https://models.example/v1
+```
+
+Knowledge Forge 只讀取執行命令時所在目錄的 `.env`，不會向父目錄搜尋。CLI 參數與既有 process environment 優先於 `.env`，因此 CI、container 或 secret manager 注入的設定不會被本機檔案覆蓋。
+
+也可以直接使用 process environment：
+
+```bash
 export OPENAI_API_KEY=...
 export OPENAI_MODEL=...
 # 選用：export OPENAI_BASE_URL=https://models.example/v1
@@ -44,7 +61,7 @@ uv run knowledge-forge generate \
   --base-url https://models.example/v1
 ```
 
-雖然 CLI 也接受 `--api-key`，仍建議使用 `OPENAI_API_KEY`，避免 credential 留在 shell history。
+雖然 CLI 也接受 `--api-key`，仍建議使用 `.env`、`OPENAI_API_KEY` 或 production secret manager，避免 credential 留在 shell history。`.env` 已被 Git 忽略；請勿把真實 secret 寫入 `.env.example`。
 
 建立新的 Bundle；`--out` 必須不存在或為空目錄：
 

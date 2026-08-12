@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
+from dotenv import load_dotenv
 
 from .application import generate as generate_bundle
 from .application import reconcile as reconcile_bundle
@@ -18,6 +19,18 @@ app = typer.Typer(
     pretty_exceptions_enable=False,
     help="Build human-and-agent maintained OKF 0.2 knowledge bundles from PDFs.",
 )
+
+
+def load_local_env() -> bool:
+    """Load only .env in the invocation directory without overriding process env."""
+    path = Path.cwd() / ".env"
+    return load_dotenv(dotenv_path=path, override=False) if path.is_file() else False
+
+
+def main() -> None:
+    load_local_env()
+    app()
+
 
 SourceOption = Annotated[
     Path, typer.Option("--source", exists=True, file_okay=False, readable=True)
