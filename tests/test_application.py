@@ -12,6 +12,7 @@ from knowledge_forge.models import (
     ConceptDraft,
     ConceptPlan,
     Evidence,
+    GenerationIdentity,
     PDFSource,
     PlannedConcept,
     SourcePage,
@@ -129,6 +130,44 @@ def test_generate_records_and_reports_non_parallel_compatibility_mode(
     generation = load_state(output).generation
     assert generation.parallel_tool_calls is False
     assert generation.concept_concurrency == 1
+
+
+def test_update_tool_call_mode_change_bypasses_fast_path_and_updates_identity(
+    tmp_path: Path,
+    fake_runtime: tuple[list[PDFSource], list[str]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_dir, output = generate_bundle(tmp_path)
+    concept_path = output / "concepts/refund-policy.md"
+    concept_path.write_text(concept_path.read_text().replace("Original", "Curated by a human"))
+    observed_modes: list[bool] = []
+    original_run_agent = application._run_agent
+
+    def observe_mode(**kwargs: object) -> tuple[dict[str, str], str]:
+        generation = kwargs["generation"]
+        assert isinstance(generation, GenerationIdentity)
+        observed_modes.append(generation.parallel_tool_calls)
+        return original_run_agent(**kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(application, "_run_agent", observe_mode)
+    progress: list[str] = []
+
+    assert application.update(
+        source=source_dir,
+        output=output,
+        model="fake-model",
+        api_key="secret",
+        base_url="https://models.example/v1",
+        language="auto",
+        max_agent_steps=50,
+        parallel_tool_calls=False,
+        progress=progress.append,
+    )
+
+    assert observed_modes == [False]
+    assert progress[0] == "Tool-call mode: non-parallel compatibility."
+    assert load_state(output).generation.parallel_tool_calls is False
+    assert "Curated by a human" in concept_path.read_text()
 
 
 def test_isolated_reasoning_sessions_share_the_page_index_and_publish_nothing_on_failure(

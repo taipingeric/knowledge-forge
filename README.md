@@ -84,10 +84,19 @@ After planning, `generate` synthesizes up to four independent Concept Documents 
 
 Concept concurrency is separate from parallel tool calls. `--concept-concurrency` controls how many Concept synthesis tasks run at once. Within each task, parallel tool-call mode controls whether one model turn may request several `search_pages` or `read_pages` calls.
 
-For a Responses-to-Bedrock gateway that cannot replay multiple tool results, explicitly select non-parallel compatibility mode:
+For a Responses-to-Bedrock gateway that cannot replay multiple tool results, explicitly select non-parallel compatibility mode on either `generate` or `update`:
 
 ```bash
 uv run knowledge-forge generate \
+  --source ./pdfs \
+  --out ./knowledge \
+  --no-parallel-tool-calls
+```
+
+Use the same option when updating an existing Bundle:
+
+```bash
+uv run knowledge-forge update \
   --source ./pdfs \
   --out ./knowledge \
   --no-parallel-tool-calls
@@ -130,7 +139,7 @@ uv run knowledge-forge update \
   --out ../knowledge-base
 ```
 
-When the PDF Sources, Bundle, state, and Generation Identity are all unchanged, `update` does not call the model or write files. People can edit Concept body text and the `type`, `title`, `description`, `tags`, and `status` fields. Do not directly edit `generated`, `sources`, hashes, page mappings, `verified`, `index.md`, `log.md`, or `.knowledge-forge/`.
+When the PDF Sources, Bundle, state, and Generation Identity are all unchanged, `update` does not call the model or write files. Tool-call mode is part of Generation Identity, so changing it regenerates the agent candidate instead of returning `No changes`. People can edit Concept body text and the `type`, `title`, `description`, `tags`, and `status` fields. Do not directly edit `generated`, `sources`, hashes, page mappings, `verified`, `index.md`, `log.md`, or `.knowledge-forge/`.
 
 A valid document that a person adds under `concepts/` is registered as a permanent Human-owned Concept during the next mutation. A normal `update` does not rewrite, delete, or adopt it. The MVP does not yet provide an ownership adoption command.
 
@@ -218,7 +227,7 @@ Material, disputed, numeric, policy, or version-sensitive statements use page-le
 
 ## TODO
 
-- [x] Make parallel tool calls configurable for `generate`. The default preserves and replays all parallel calls; `--no-parallel-tool-calls` selects deterministic single-call compatibility for affected gateways. Provider failures never trigger an automatic fallback.
+- [x] Make parallel tool calls configurable for `generate` and `update`. The default preserves and replays all parallel calls; `--no-parallel-tool-calls` selects deterministic single-call compatibility for affected gateways. Provider failures never trigger an automatic fallback.
 - [x] Add processing-time statistics for `generate`. PDF reading, indexing, concept planning, each Concept synthesis, render and validation, candidate writing and validation, publication, and total duration are reported without changing deterministic artifacts.
 
 ## Documentation maintenance

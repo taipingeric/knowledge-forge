@@ -70,6 +70,11 @@ def _append_log(existing: str, entry: str) -> str:
     return f"{marker}\n{entry}\n{body}".rstrip() + "\n"
 
 
+def _report_tool_call_mode(report: Callable[[str], None], parallel: bool) -> None:
+    mode = "parallel" if parallel else "non-parallel compatibility"
+    report(f"Tool-call mode: {mode}.")
+
+
 def _source_states(sources: list[PDFSource]) -> dict[str, SourceState]:
     return {
         source.id: SourceState(content_sha256=source.content_sha256, page_count=len(source.pages))
@@ -310,11 +315,7 @@ def _generate_locked(
     output = output.resolve()
     if output.exists() and (not output.is_dir() or any(output.iterdir())):
         raise ValidationFailure("generate requires a missing or empty --out directory")
-    report(
-        "Tool-call mode: parallel."
-        if generation.parallel_tool_calls
-        else "Tool-call mode: non-parallel compatibility."
-    )
+    _report_tool_call_mode(report, generation.parallel_tool_calls)
     report("Reading PDF sources...")
     with processing_phase(timing, "PDF Source reading"):
         sources = extract_sources(source)
@@ -380,6 +381,7 @@ def update(
     base_url: str | None,
     language: str,
     max_agent_steps: int,
+    parallel_tool_calls: bool = True,
     progress: Callable[[str], None] | None = None,
 ) -> bool:
     reject_tracing()
@@ -392,6 +394,7 @@ def update(
             base_url=base_url,
             language=language,
             max_agent_steps=max_agent_steps,
+            parallel_tool_calls=parallel_tool_calls,
             progress=progress,
         )
 
@@ -405,10 +408,12 @@ def _update_locked(
     base_url: str | None,
     language: str,
     max_agent_steps: int,
+    parallel_tool_calls: bool = True,
     progress: Callable[[str], None] | None = None,
 ) -> bool:
     report = progress or (lambda _: None)
     output = output.resolve()
+    _report_tool_call_mode(report, parallel_tool_calls)
     report("Validating the current bundle...")
     state = validate_bundle(output, for_mutation=True)
     report("Reading PDF sources...")
@@ -419,7 +424,7 @@ def _update_locked(
         base_url=base_url,
         language=language,
         max_agent_steps=max_agent_steps,
-        parallel_tool_calls=state.generation.parallel_tool_calls,
+        parallel_tool_calls=parallel_tool_calls,
         concept_concurrency=state.generation.concept_concurrency,
     )
     current = public_concepts(output)

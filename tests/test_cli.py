@@ -146,6 +146,60 @@ def test_generate_accepts_non_parallel_tool_call_compatibility_mode(
     assert parallel_modes == [False]
 
 
+@pytest.mark.parametrize(
+    ("extra_args", "expected_parallel"),
+    [([], True), (["--no-parallel-tool-calls"], False)],
+)
+def test_update_selects_tool_call_mode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    extra_args: list[str],
+    expected_parallel: bool,
+) -> None:
+    source = tmp_path / "pdfs"
+    source.mkdir()
+    output = tmp_path / "knowledge"
+    observed: list[bool] = []
+
+    def fake_update(**kwargs: object) -> bool:
+        parallel = bool(kwargs["parallel_tool_calls"])
+        observed.append(parallel)
+        progress = kwargs["progress"]
+        assert callable(progress)
+        progress(
+            "Tool-call mode: parallel."
+            if parallel
+            else "Tool-call mode: non-parallel compatibility."
+        )
+        return False
+
+    monkeypatch.setattr(cli, "update_bundle", fake_update)
+    result = CliRunner().invoke(
+        cli.app,
+        [
+            "update",
+            "--source",
+            str(source),
+            "--out",
+            str(output),
+            "--model",
+            "fake-model",
+            "--api-key",
+            "secret",
+            *extra_args,
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "No changes"
+    assert result.stderr.strip() == (
+        "[knowledge-forge] Tool-call mode: parallel."
+        if expected_parallel
+        else "[knowledge-forge] Tool-call mode: non-parallel compatibility."
+    )
+    assert observed == [expected_parallel]
+
+
 def test_generate_accepts_sequential_concept_synthesis(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -128,6 +128,7 @@ def update(
     base_url: BaseUrlOption = None,
     language: LanguageOption = "auto",
     max_agent_steps: StepOption = 50,
+    no_parallel_tool_calls: NoParallelToolCallsOption = False,
 ) -> None:
     """Reconcile a Bundle against its complete authoritative PDF source set."""
 
@@ -140,6 +141,7 @@ def update(
             base_url=base_url,
             language=language,
             max_agent_steps=max_agent_steps,
+            parallel_tool_calls=not no_parallel_tool_calls,
             progress=_show_progress,
         )
         typer.echo(f"Updated OKF Bundle: {out.resolve()}" if changed else "No changes")

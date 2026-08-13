@@ -84,10 +84,19 @@ Planning 完成後，`generate` 預設最多同時 synthesis 四個互不依賴�
 
 Concept concurrency 與 parallel tool calls 是不同設定。`--concept-concurrency` 控制同時執行多少個 Concept synthesis tasks；每個 task 內的 parallel tool-call mode 則控制單次 model turn 能否要求多個 `search_pages` 或 `read_pages` calls。
 
-若 Responses-to-Bedrock gateway 無法 replay 多個 tool results，請明確選用 non-parallel compatibility mode：
+若 Responses-to-Bedrock gateway 無法 replay 多個 tool results，請在 `generate` 或 `update` 明確選用 non-parallel compatibility mode：
 
 ```bash
 uv run knowledge-forge generate \
+  --source ./pdfs \
+  --out ./knowledge \
+  --no-parallel-tool-calls
+```
+
+更新既有 Bundle 時使用相同 option：
+
+```bash
+uv run knowledge-forge update \
   --source ./pdfs \
   --out ./knowledge \
   --no-parallel-tool-calls
@@ -130,7 +139,7 @@ uv run knowledge-forge update \
   --out ../knowledge-base
 ```
 
-PDF Sources、Bundle、state 與 Generation Identity 全部未變時，`update` 不呼叫模型也不寫入任何檔案。人工可以修改 Concept 正文及 `type`、`title`、`description`、`tags`、`status`；不可直接修改 `generated`、`sources`、hash、page mapping、`verified`、`index.md`、`log.md` 或 `.knowledge-forge/`。
+PDF Sources、Bundle、state 與 Generation Identity 全部未變時，`update` 不呼叫模型也不寫入任何檔案。Tool-call mode 是 Generation Identity 的一部分，因此變更模式時會重新產生 agent candidate，而不會回傳 `No changes`。人工可以修改 Concept 正文及 `type`、`title`、`description`、`tags`、`status`；不可直接修改 `generated`、`sources`、hash、page mapping、`verified`、`index.md`、`log.md` 或 `.knowledge-forge/`。
 
 人工新增在 `concepts/` 下且符合命名規則的文件，會在下一次 mutation 中登記為永久 Human-owned Concept。一般 `update` 不會重寫、刪除或接管這些文件；MVP 尚未提供 ownership adoption command。
 
@@ -218,7 +227,7 @@ sources:
 
 ## TODO
 
-- [x] 讓 `generate` 可切換 parallel tool calls。預設模式保留並 replay 所有平行 calls；`--no-parallel-tool-calls` 為受影響的 gateways 選用 deterministic single-call compatibility。Provider failure 絕不觸發自動 fallback。
+- [x] 讓 `generate` 與 `update` 可切換 parallel tool calls。預設模式保留並 replay 所有平行 calls；`--no-parallel-tool-calls` 為受影響的 gateways 選用 deterministic single-call compatibility。Provider failure 絕不觸發自動 fallback。
 - [x] 加入 `generate` 處理時間統計。PDF 讀取、索引、concept planning、各 Concept synthesis、render/validation、candidate writing/validation、publication 與總時間都會顯示，且不改變 deterministic artifacts。
 
 ## 文件同步維護規則
