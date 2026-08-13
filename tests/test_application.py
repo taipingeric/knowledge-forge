@@ -20,6 +20,7 @@ from knowledge_forge.models import (
 from knowledge_forge.okf import dump_markdown, parse_markdown, render_concept
 from knowledge_forge.sources import logical_resource, sha256_text
 from knowledge_forge.state import bundle_hash, load_state
+from knowledge_forge.timing import ProcessingTimer
 from knowledge_forge.validation import validate_bundle
 
 
@@ -80,6 +81,23 @@ def generate_bundle(tmp_path: Path) -> tuple[Path, Path]:
     return source_dir, output
 
 
+class TickingClock:
+    def __init__(self) -> None:
+        self.current = -1.0
+
+    def __call__(self) -> float:
+        self.current += 1.0
+        return self.current
+
+
+def completed_phases(progress: list[str]) -> list[str]:
+    return [
+        message.removesuffix(" completed in 1.000s.")
+        for message in progress
+        if " completed in " in message
+    ]
+
+
 def test_generate_and_deterministic_noop(
     tmp_path: Path, fake_runtime: tuple[list[PDFSource], list[str]]
 ) -> None:
@@ -103,6 +121,163 @@ def test_generate_and_deterministic_noop(
     )
     assert bundle_hash(output, include_state=True) == before
     validate_bundle(output)
+
+
+def test_update_noop_reports_only_completed_deterministic_phases(
+    tmp_path: Path, fake_runtime: tuple[list[PDFSource], list[str]]
+) -> None:
+    source_dir, output = generate_bundle(tmp_path)
+    before = bundle_hash(output, include_state=True)
+    progress: list[str] = []
+
+    assert not application.update(
+        source=source_dir,
+        output=output,
+        model="fake-model",
+        api_key="secret",
+        base_url="https://models.example/v1",
+        language="auto",
+        max_agent_steps=50,
+        progress=progress.append,
+        timing=ProcessingTimer(progress.append, TickingClock()),
+    )
+
+    assert completed_phases(progress) == [
+        "Current Bundle validation",
+        "PDF Source reading",
+        "No-change evaluation",
+    ]
+    assert bundle_hash(output, include_state=True) == before
+
+
+def test_update_baseline_reuse_reports_only_completed_reuse_and_merge_phases(
+    tmp_path: Path,
+    fake_runtime: tuple[list[PDFSource], list[str]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_dir, output = generate_bundle(tmp_path)
+    concept_path = output / "concepts/refund-policy.md"
+    concept_path.write_text(concept_path.read_text().replace("Original", "Curated by a human"))
+    monkeypatch.setattr(
+        application,
+        "_run_agent",
+        lambda **_: pytest.fail("baseline reuse must not call the agent"),
+    )
+    progress: list[str] = []
+
+    assert application.update(
+        source=source_dir,
+        output=output,
+        model="fake-model",
+        api_key="secret",
+        base_url="https://models.example/v1",
+        language="auto",
+        max_agent_steps=50,
+        progress=progress.append,
+        timing=ProcessingTimer(progress.append, TickingClock()),
+    )
+
+    assert completed_phases(progress) == [
+        "Current Bundle validation",
+        "PDF Source reading",
+        "No-change evaluation",
+        "Agent Baseline reuse",
+        "Agent candidate merge and conflict detection",
+        "Candidate Bundle writing and validation",
+        "Atomic publication",
+    ]
+    assert "Curated by a human" in concept_path.read_text()
+    assert "completed in" not in "\n".join(
+        path.read_text(encoding="utf-8") for path in output.rglob("*") if path.is_file()
+    )
+
+
+def test_agent_backed_update_reports_reasoning_and_each_synthesis_phase(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source_dir = tmp_path / "pdfs"
+    source_dir.mkdir()
+    output = tmp_path / "knowledge"
+    sources = [pdf()]
+    candidates = [concept(sources[0], "Seven days")]
+    run_agent = application._run_agent
+    monkeypatch.setattr(application, "extract_sources", lambda _: sources)
+    monkeypatch.setattr(
+        application,
+        "_run_agent",
+        lambda **_: ({"concepts/refund-policy": candidates[0]}, "English"),
+    )
+    application.generate(
+        source=source_dir,
+        output=output,
+        model="fake-model",
+        api_key="secret",
+        base_url="https://models.example/v1",
+        language="auto",
+        max_agent_steps=50,
+        concept_concurrency=1,
+    )
+
+    class UpdateAgent:
+        def __init__(self, **_: object) -> None:
+            pass
+
+        def plan(self, language: str, existing_ids: list[str]) -> ConceptPlan:
+            return ConceptPlan(
+                language="English",
+                concepts=[
+                    PlannedConcept(
+                        slug="refund-policy",
+                        title="Refund policy",
+                        type="Policy",
+                        description="Rules for refunds.",
+                        search_queries=["refund"],
+                    )
+                ],
+            )
+
+        def synthesize(self, planned: PlannedConcept, language: str) -> ConceptDraft:
+            return ConceptDraft(
+                slug=planned.slug,
+                title=planned.title,
+                type=planned.type,
+                description=planned.description,
+                body=(
+                    "# Rule\n\nFive days.[^policy.pdf@p1]\n\n"
+                    "[^policy.pdf@p1]: Refund policy, page 1"
+                ),
+                evidence=[Evidence(source_id="policy.pdf", pages=[1])],
+            )
+
+    sources[0] = pdf("two")
+    monkeypatch.setattr(application, "_run_agent", run_agent)
+    monkeypatch.setattr(application, "ReasoningAgent", UpdateAgent)
+    progress: list[str] = []
+
+    assert application.update(
+        source=source_dir,
+        output=output,
+        model="fake-model",
+        api_key="secret",
+        base_url="https://models.example/v1",
+        language="auto",
+        max_agent_steps=50,
+        progress=progress.append,
+        timing=ProcessingTimer(progress.append, TickingClock()),
+    )
+
+    assert completed_phases(progress) == [
+        "Current Bundle validation",
+        "PDF Source reading",
+        "No-change evaluation",
+        "PDF indexing",
+        "Concept planning",
+        "Concept synthesis 1/1 (refund-policy)",
+        "Concept rendering and validation",
+        "Agent candidate merge and conflict detection",
+        "Candidate Bundle writing and validation",
+        "Atomic publication",
+    ]
 
 
 def test_generate_records_and_reports_non_parallel_compatibility_mode(
@@ -277,6 +452,7 @@ def test_conflict_leaves_live_bundle_untouched_and_can_use_source(
     live_before = live.read_text()
     sources[0] = pdf("two")
     generated[0] = concept(sources[0], "Five days")
+    progress: list[str] = []
 
     with pytest.raises(ReconciliationRequired):
         application.update(
@@ -287,6 +463,8 @@ def test_conflict_leaves_live_bundle_untouched_and_can_use_source(
             base_url="https://models.example/v1",
             language="auto",
             max_agent_steps=50,
+            progress=progress.append,
+            timing=ProcessingTimer(progress.append, TickingClock()),
         )
     assert live.read_text() == live_before
     work = tmp_path / "knowledge.reconciliation"
@@ -294,6 +472,23 @@ def test_conflict_leaves_live_bundle_untouched_and_can_use_source(
     assert "Fourteen days" in report
     assert "Five days" in report
     assert "`policy.pdf` pages 1" in report
+    assert completed_phases(progress) == [
+        "Current Bundle validation",
+        "PDF Source reading",
+        "No-change evaluation",
+        "Agent candidate merge and conflict detection",
+        "Candidate Bundle writing and validation",
+        "Reconciliation artifact writing",
+    ]
+    assert "Atomic publication completed" not in "\n".join(progress)
+    reconciliation_paths = [
+        tmp_path / "knowledge.reconciliation.md",
+        *(tmp_path / "knowledge.reconciliation").rglob("*"),
+    ]
+    reconciliation_text = "\n".join(
+        path.read_text(encoding="utf-8") for path in reconciliation_paths if path.is_file()
+    )
+    assert "completed in" not in reconciliation_text
     resolution = yaml.safe_load((work / "resolution.yaml").read_text())
     resolution["resolutions"][0]["action"] = "use-source"
     (work / "resolution.yaml").write_text(yaml.safe_dump(resolution, sort_keys=False))

@@ -383,6 +383,7 @@ def update(
     max_agent_steps: int,
     parallel_tool_calls: bool = True,
     progress: Callable[[str], None] | None = None,
+    timing: ProcessingTimer | None = None,
 ) -> bool:
     reject_tracing()
     with output_lock(output.resolve()):
@@ -396,6 +397,7 @@ def update(
             max_agent_steps=max_agent_steps,
             parallel_tool_calls=parallel_tool_calls,
             progress=progress,
+            timing=timing,
         )
 
 
@@ -410,14 +412,17 @@ def _update_locked(
     max_agent_steps: int,
     parallel_tool_calls: bool = True,
     progress: Callable[[str], None] | None = None,
+    timing: ProcessingTimer | None = None,
 ) -> bool:
     report = progress or (lambda _: None)
     output = output.resolve()
     _report_tool_call_mode(report, parallel_tool_calls)
     report("Validating the current bundle...")
-    state = validate_bundle(output, for_mutation=True)
+    with processing_phase(timing, "Current Bundle validation"):
+        state = validate_bundle(output, for_mutation=True)
     report("Reading PDF sources...")
-    sources = extract_sources(source)
+    with processing_phase(timing, "PDF Source reading"):
+        sources = extract_sources(source)
     report(f"Loaded {len(sources)} PDFs with {sum(len(item.pages) for item in sources)} pages.")
     identity = generation_identity(
         model=model,
@@ -427,12 +432,15 @@ def _update_locked(
         parallel_tool_calls=parallel_tool_calls,
         concept_concurrency=state.generation.concept_concurrency,
     )
-    current = public_concepts(output)
-    if (
-        source_set_hash(sources) == state.source_set_hash
-        and _same_generation_request(identity, state.generation)
-        and bundle_hash(output) == state.bundle_hash
-    ):
+    report("Evaluating deterministic no-change conditions...")
+    with processing_phase(timing, "No-change evaluation"):
+        current = public_concepts(output)
+        source_unchanged = source_set_hash(sources) == state.source_set_hash
+        generation_unchanged = _same_generation_request(identity, state.generation)
+        no_changes = (
+            source_unchanged and generation_unchanged and bundle_hash(output) == state.bundle_hash
+        )
+    if no_changes:
         report("The source set and bundle are unchanged.")
         return False
 
@@ -442,15 +450,15 @@ def _update_locked(
         for concept_id, item in state.concepts.items()
         if item.deleted
     }
-    source_unchanged = source_set_hash(sources) == state.source_set_hash
-    if source_unchanged and _same_generation_request(identity, state.generation):
+    if source_unchanged and generation_unchanged:
         report("Reusing the previous agent baseline; source evidence is unchanged.")
-        identity = state.generation
-        candidates = {
-            concept_id: load_baseline(output, concept_id).raw_markdown
-            for concept_id, owner in ownership.items()
-            if owner == "agent" and concept_id in state.concepts
-        }
+        with processing_phase(timing, "Agent Baseline reuse"):
+            identity = state.generation
+            candidates = {
+                concept_id: load_baseline(output, concept_id).raw_markdown
+                for concept_id, owner in ownership.items()
+                if owner == "agent" and concept_id in state.concepts
+            }
     else:
         candidates, output_language = _run_agent(
             sources=sources,
@@ -458,135 +466,144 @@ def _update_locked(
             api_key=api_key,
             existing_ids=sorted(current),
             progress=progress,
+            timing=timing,
         )
         identity.output_language = output_language
 
-    report("Merging agent candidates with human edits...")
-    published: dict[str, str] = {}
-    baselines: dict[str, str] = {}
-    conflicts: list[Conflict] = []
-    for concept_id, owner in ownership.items():
-        human_raw = current.get(concept_id)
-        candidate_raw = candidates.get(concept_id)
-        if owner == "human":
-            prior = state.concepts.get(concept_id)
-            if prior and prior.deleted:
-                if candidate_raw is None:
+    report("Merging agent candidates and detecting Reconciliation Conflicts...")
+    with processing_phase(timing, "Agent candidate merge and conflict detection"):
+        published: dict[str, str] = {}
+        baselines: dict[str, str] = {}
+        conflicts: list[Conflict] = []
+        for concept_id, owner in ownership.items():
+            human_raw = current.get(concept_id)
+            candidate_raw = candidates.get(concept_id)
+            if owner == "human":
+                prior = state.concepts.get(concept_id)
+                if prior and prior.deleted:
+                    if candidate_raw is None:
+                        continue
+                    candidate_evidence_hash = _candidate_evidence_hash(candidate_raw)
+                    if candidate_evidence_hash == prior.deletion_candidate_hash:
+                        continue
+                    conflicts.append(
+                        Conflict(
+                            id=sha256_text(f"{concept_id}\0deleted-change")[:16],
+                            concept_id=concept_id,
+                            block_id="document:deletion",
+                            human="<deleted>",
+                            candidate=candidate_raw,
+                            evidence=_evidence_from_raw(candidate_raw),
+                            reason="Evidence for a human-deleted Concept changed.",
+                        )
+                    )
+                    published[concept_id] = candidate_raw
+                    baselines[concept_id] = candidate_raw
+                    deleted.pop(concept_id, None)
+                    ownership[concept_id] = "agent"
                     continue
-                candidate_evidence_hash = _candidate_evidence_hash(candidate_raw)
-                if candidate_evidence_hash == prior.deletion_candidate_hash:
-                    continue
-                conflicts.append(
-                    Conflict(
-                        id=sha256_text(f"{concept_id}\0deleted-change")[:16],
+                if human_raw is not None:
+                    published[concept_id] = human_raw
+                if candidate_raw is not None:
+                    conflict = Conflict(
+                        id=sha256_text(f"{concept_id}\0ownership")[:16],
                         concept_id=concept_id,
-                        block_id="document:deletion",
-                        human="<deleted>",
+                        block_id="ownership",
+                        human=human_raw,
                         candidate=candidate_raw,
                         evidence=_evidence_from_raw(candidate_raw),
-                        reason="Evidence for a human-deleted Concept changed.",
+                        reason="Agent candidate collides with a persistently human-owned Concept.",
                     )
-                )
-                published[concept_id] = candidate_raw
-                baselines[concept_id] = candidate_raw
-                deleted.pop(concept_id, None)
-                ownership[concept_id] = "agent"
+                    if not any(
+                        _override_matches(override, conflict, human_raw or "")
+                        for override in state.overrides
+                    ):
+                        conflicts.append(conflict)
                 continue
-            if human_raw is not None:
-                published[concept_id] = human_raw
-            if candidate_raw is not None:
-                conflict = Conflict(
-                    id=sha256_text(f"{concept_id}\0ownership")[:16],
-                    concept_id=concept_id,
-                    block_id="ownership",
-                    human=human_raw,
-                    candidate=candidate_raw,
-                    evidence=_evidence_from_raw(candidate_raw),
-                    reason="Agent candidate collides with a persistently human-owned Concept.",
-                )
-                if not any(
-                    _override_matches(override, conflict, human_raw or "")
-                    for override in state.overrides
-                ):
-                    conflicts.append(conflict)
-            continue
 
-        baseline = load_baseline(output, concept_id).raw_markdown
-        if human_raw is None:
-            if candidate_raw is not None:
-                conflicts.append(
-                    Conflict(
-                        id=sha256_text(f"{concept_id}\0deletion")[:16],
-                        concept_id=concept_id,
-                        block_id="document:deletion",
-                        baseline=baseline,
-                        candidate=candidate_raw,
-                        evidence=_evidence_from_raw(candidate_raw),
-                        reason=(
-                            "A human deleted an agent-owned Concept that still has source support."
-                        ),
+            baseline = load_baseline(output, concept_id).raw_markdown
+            if human_raw is None:
+                if candidate_raw is not None:
+                    conflicts.append(
+                        Conflict(
+                            id=sha256_text(f"{concept_id}\0deletion")[:16],
+                            concept_id=concept_id,
+                            block_id="document:deletion",
+                            baseline=baseline,
+                            candidate=candidate_raw,
+                            evidence=_evidence_from_raw(candidate_raw),
+                            reason=(
+                                "A human deleted an agent-owned Concept that still has source "
+                                "support."
+                            ),
+                        )
                     )
-                )
-                published[concept_id] = candidate_raw
-                baselines[concept_id] = candidate_raw
-            continue
-        if candidate_raw is None:
-            if human_raw != baseline:
-                conflict = Conflict(
-                    id=sha256_text(f"{concept_id}\0source-removal")[:16],
-                    concept_id=concept_id,
-                    block_id="document:source-removal",
-                    baseline=baseline,
-                    human=human_raw,
-                    reason="Source support was removed from a human-edited Concept.",
-                )
+                    published[concept_id] = candidate_raw
+                    baselines[concept_id] = candidate_raw
+                continue
+            if candidate_raw is None:
+                if human_raw != baseline:
+                    conflict = Conflict(
+                        id=sha256_text(f"{concept_id}\0source-removal")[:16],
+                        concept_id=concept_id,
+                        block_id="document:source-removal",
+                        baseline=baseline,
+                        human=human_raw,
+                        reason="Source support was removed from a human-edited Concept.",
+                    )
+                    if not any(
+                        _override_matches(override, conflict, human_raw)
+                        for override in state.overrides
+                    ):
+                        conflicts.append(conflict)
+                    published[concept_id] = human_raw
+                    baselines[concept_id] = baseline
+                continue
+            evidence = _evidence_from_raw(candidate_raw)
+            result = merge_concept(concept_id, baseline, human_raw, candidate_raw, evidence)
+            active_conflicts = [
+                conflict
+                for conflict in result.conflicts
                 if not any(
                     _override_matches(override, conflict, human_raw) for override in state.overrides
-                ):
-                    conflicts.append(conflict)
-                published[concept_id] = human_raw
-                baselines[concept_id] = baseline
-            continue
-        evidence = _evidence_from_raw(candidate_raw)
-        result = merge_concept(concept_id, baseline, human_raw, candidate_raw, evidence)
-        active_conflicts = [
-            conflict
-            for conflict in result.conflicts
-            if not any(
-                _override_matches(override, conflict, human_raw) for override in state.overrides
-            )
-        ]
-        conflicts.extend(active_conflicts)
-        merged = _preserve_verification(human_raw, result.markdown)
-        published[concept_id] = merged
-        baselines[concept_id] = candidate_raw
-
-    for concept_id, candidate_raw in candidates.items():
-        if concept_id not in ownership:
-            published[concept_id] = candidate_raw
+                )
+            ]
+            conflicts.extend(active_conflicts)
+            merged = _preserve_verification(human_raw, result.markdown)
+            published[concept_id] = merged
             baselines[concept_id] = candidate_raw
-            ownership[concept_id] = "agent"
+
+        for concept_id, candidate_raw in candidates.items():
+            if concept_id not in ownership:
+                published[concept_id] = candidate_raw
+                baselines[concept_id] = candidate_raw
+                ownership[concept_id] = "agent"
 
     report("Writing and validating the candidate bundle...")
     with staged_bundle(output, copy_existing=True) as staging:
-        _write_bundle(
-            staging,
-            concepts=published,
-            baselines=baselines,
-            ownership=ownership,
-            sources=sources,
-            generation=identity,
-            previous_state=state,
-            action="Update",
-            log_detail=f"Reconciled {len(published)} Concepts from {len(sources)} PDF sources.",
-            deleted=deleted,
-        )
+        with processing_phase(timing, "Candidate Bundle writing and validation"):
+            _write_bundle(
+                staging,
+                concepts=published,
+                baselines=baselines,
+                ownership=ownership,
+                sources=sources,
+                generation=identity,
+                previous_state=state,
+                action="Update",
+                log_detail=(
+                    f"Reconciled {len(published)} Concepts from {len(sources)} PDF sources."
+                ),
+                deleted=deleted,
+            )
         if conflicts:
             report("Conflicts require human reconciliation; preserving the current bundle.")
-            _write_reconciliation(output, staging, state, sources, identity, conflicts)
+            with processing_phase(timing, "Reconciliation artifact writing"):
+                _write_reconciliation(output, staging, state, sources, identity, conflicts)
             raise ReconciliationRequired(str(output.parent / f"{output.name}.reconciliation.md"))
         report("Publishing the bundle atomically...")
-        publish_staging(staging, output)
+        with processing_phase(timing, "Atomic publication"):
+            publish_staging(staging, output)
     return True
 
 

@@ -129,7 +129,7 @@ Each completed phase includes its duration, and the command ends with a total-du
 [knowledge-forge] Total processing time: 61.842s.
 ```
 
-On failure, completed phases and total elapsed time are still reported while the existing error and exit code are preserved. These messages do not contain full PDF text, model responses, or API keys. Timing and progress are operational stderr output only; they do not enter the OKF Bundle, Agent Baseline, Generation Identity, or private state. The final command result remains on stdout for use in shell pipelines.
+On failure, completed phases and total elapsed time are still reported while the existing error and exit code are preserved. These messages do not contain full PDF text, model responses, or API keys. Timing and progress are operational stderr output only; they do not enter the OKF Bundle, Agent Baseline, Generation Identity, reconciliation artifacts, or private state. The final command result remains on stdout for use in shell pipelines.
 
 Update from the complete authoritative PDF set. `--source` is not the set of files changed in this run. It is the complete set of PDFs that the Team Knowledge Wiki must currently use:
 
@@ -140,6 +140,8 @@ uv run knowledge-forge update \
 ```
 
 When the PDF Sources, Bundle, state, and Generation Identity are all unchanged, `update` does not call the model or write files. Tool-call mode is part of Generation Identity, so changing it regenerates the agent candidate instead of returning `No changes`. People can edit Concept body text and the `type`, `title`, `description`, `tags`, and `status` fields. Do not directly edit `generated`, `sources`, hashes, page mappings, `verified`, `index.md`, `log.md`, or `.knowledge-forge/`.
+
+`update` reports durations only for phases that actually run. A deterministic `No changes` result reports current Bundle validation, PDF reading, no-change evaluation, and total time without model phases. An unchanged source set with human edits reports Agent Baseline reuse and merge phases without planning or synthesis. Regeneration reports temporary indexing, planning, and every Concept synthesis separately. Agent candidate merge and Reconciliation Conflict detection are measured as one combined phase because the structural three-way merge detects conflicts as it runs. Candidate validation, reconciliation artifact writing when required, and atomic publication when it occurs are also timed. Reconciliation keeps exit code 3, other operational failures keep exit code 2, and both still report completed phases and total elapsed time.
 
 A valid document that a person adds under `concepts/` is registered as a permanent Human-owned Concept during the next mutation. A normal `update` does not rewrite, delete, or adopt it. The MVP does not yet provide an ownership adoption command.
 
@@ -229,6 +231,7 @@ Material, disputed, numeric, policy, or version-sensitive statements use page-le
 
 - [x] Make parallel tool calls configurable for `generate` and `update`. The default preserves and replays all parallel calls; `--no-parallel-tool-calls` selects deterministic single-call compatibility for affected gateways. Provider failures never trigger an automatic fallback.
 - [x] Add processing-time statistics for `generate`. PDF reading, indexing, concept planning, each Concept synthesis, render and validation, candidate writing and validation, publication, and total duration are reported without changing deterministic artifacts.
+- [x] Extend processing-time statistics across `update` no-change, baseline-reuse, regeneration, reconciliation, and publication paths while reporting only phases that ran.
 
 ## Documentation maintenance
 

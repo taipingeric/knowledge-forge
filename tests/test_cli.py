@@ -174,6 +174,7 @@ def test_update_selects_tool_call_mode(
         return False
 
     monkeypatch.setattr(cli, "update_bundle", fake_update)
+    monkeypatch.setattr(cli, "monotonic", iter([0.0, 1.0]).__next__)
     result = CliRunner().invoke(
         cli.app,
         [
@@ -192,12 +193,70 @@ def test_update_selects_tool_call_mode(
 
     assert result.exit_code == 0
     assert result.stdout.strip() == "No changes"
-    assert result.stderr.strip() == (
+    expected_mode = (
         "[knowledge-forge] Tool-call mode: parallel."
         if expected_parallel
         else "[knowledge-forge] Tool-call mode: non-parallel compatibility."
     )
+    assert result.stderr.splitlines() == [
+        expected_mode,
+        "[knowledge-forge] Total processing time: 1.000s.",
+    ]
     assert observed == [expected_parallel]
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected_exit", "expected_error"),
+    [
+        (None, 0, None),
+        (cli.ReconciliationRequired("report.md"), 3, "report.md"),
+        (cli.KnowledgeForgeError("update failed"), 2, "Error: update failed"),
+    ],
+)
+def test_update_reports_total_time_and_preserves_output_and_exit_code(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: Exception | None,
+    expected_exit: int,
+    expected_error: str | None,
+) -> None:
+    source = tmp_path / "pdfs"
+    source.mkdir()
+    output = tmp_path / "knowledge"
+
+    def fake_update(**kwargs: object) -> bool:
+        timing = kwargs["timing"]
+        assert isinstance(timing, cli.ProcessingTimer)
+        with timing.phase("Current Bundle validation"):
+            pass
+        if failure is not None:
+            raise failure
+        return False
+
+    monkeypatch.setattr(cli, "update_bundle", fake_update)
+    monkeypatch.setattr(cli, "monotonic", iter([0.0, 1.0, 2.0, 3.0]).__next__)
+    result = CliRunner().invoke(
+        cli.app,
+        [
+            "update",
+            "--source",
+            str(source),
+            "--out",
+            str(output),
+            "--model",
+            "fake-model",
+            "--api-key",
+            "secret",
+        ],
+    )
+
+    assert result.exit_code == expected_exit
+    assert result.stdout.strip() == ("No changes" if failure is None else "")
+    stderr = result.stderr.splitlines()
+    assert "[knowledge-forge] Current Bundle validation completed in 1.000s." in stderr
+    assert stderr[-1] == "[knowledge-forge] Total processing time: 3.000s."
+    if expected_error is not None:
+        assert expected_error in stderr[-2]
 
 
 def test_generate_accepts_sequential_concept_synthesis(

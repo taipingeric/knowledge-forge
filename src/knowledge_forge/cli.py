@@ -131,6 +131,7 @@ def update(
     no_parallel_tool_calls: NoParallelToolCallsOption = False,
 ) -> None:
     """Reconcile a Bundle against its complete authoritative PDF source set."""
+    timing = ProcessingTimer(_show_progress, monotonic)
 
     def operation() -> None:
         changed = update_bundle(
@@ -143,10 +144,14 @@ def update(
             max_agent_steps=max_agent_steps,
             parallel_tool_calls=not no_parallel_tool_calls,
             progress=_show_progress,
+            timing=timing,
         )
         typer.echo(f"Updated OKF Bundle: {out.resolve()}" if changed else "No changes")
 
-    _run(operation)
+    try:
+        _run(operation)
+    finally:
+        timing.report_total()
 
 
 @app.command()

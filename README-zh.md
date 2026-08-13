@@ -129,7 +129,7 @@ Compatibility mode 會送出 `parallel_tool_calls: false`。若模型或 gateway
 [knowledge-forge] Total processing time: 61.842s.
 ```
 
-執行失敗時，Knowledge Forge 仍會回報已完成階段及總經過時間，並保留原有錯誤訊息與 exit code。這些訊息不包含 PDF 全文、模型回應或 API key。Timing 與 progress 僅輸出到 stderr，不會進入 OKF Bundle、Agent Baseline、Generation Identity 或 private state；最終命令結果仍輸出到 stdout，方便 shell pipeline 分流。
+執行失敗時，Knowledge Forge 仍會回報已完成階段及總經過時間，並保留原有錯誤訊息與 exit code。這些訊息不包含 PDF 全文、模型回應或 API key。Timing 與 progress 僅輸出到 stderr，不會進入 OKF Bundle、Agent Baseline、Generation Identity、reconciliation artifacts 或 private state；最終命令結果仍輸出到 stdout，方便 shell pipeline 分流。
 
 以完整、權威的目前 PDF 集合更新。`--source` 不是「本次變更的檔案」，而是 Team Knowledge Wiki 當下應採用的全部 PDF：
 
@@ -140,6 +140,8 @@ uv run knowledge-forge update \
 ```
 
 PDF Sources、Bundle、state 與 Generation Identity 全部未變時，`update` 不呼叫模型也不寫入任何檔案。Tool-call mode 是 Generation Identity 的一部分，因此變更模式時會重新產生 agent candidate，而不會回傳 `No changes`。人工可以修改 Concept 正文及 `type`、`title`、`description`、`tags`、`status`；不可直接修改 `generated`、`sources`、hash、page mapping、`verified`、`index.md`、`log.md` 或 `.knowledge-forge/`。
+
+`update` 只回報實際執行的 phases。Deterministic `No changes` 會回報目前 Bundle validation、PDF reading、no-change evaluation 與總時間，不會出現 model phases。Source set 未變但有人工作出修改時，會回報 Agent Baseline reuse 與 merge，不會虛構 planning 或 synthesis。需要 regeneration 時，會分別回報 temporary indexing、planning 與每個 Concept synthesis。Agent candidate merge 與 Reconciliation Conflict detection 會合併成一個 phase 計時，因為 structural three-way merge 會在執行時同時偵測 conflicts。Candidate validation、需要時的 reconciliation artifact writing，以及確實發生時的 atomic publication 也都有 timing。Reconciliation 維持 exit code 3，其他 operational failures 維持 exit code 2，兩者都會回報已完成 phases 與總經過時間。
 
 人工新增在 `concepts/` 下且符合命名規則的文件，會在下一次 mutation 中登記為永久 Human-owned Concept。一般 `update` 不會重寫、刪除或接管這些文件；MVP 尚未提供 ownership adoption command。
 
@@ -229,6 +231,7 @@ sources:
 
 - [x] 讓 `generate` 與 `update` 可切換 parallel tool calls。預設模式保留並 replay 所有平行 calls；`--no-parallel-tool-calls` 為受影響的 gateways 選用 deterministic single-call compatibility。Provider failure 絕不觸發自動 fallback。
 - [x] 加入 `generate` 處理時間統計。PDF 讀取、索引、concept planning、各 Concept synthesis、render/validation、candidate writing/validation、publication 與總時間都會顯示，且不改變 deterministic artifacts。
+- [x] 將處理時間統計延伸到 `update` 的 no-change、baseline-reuse、regeneration、reconciliation 與 publication 路徑，且只回報真正執行的 phases。
 
 ## 文件同步維護規則
 
