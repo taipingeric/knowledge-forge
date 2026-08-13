@@ -21,7 +21,7 @@ class WorkflowState(TypedDict, total=False):
 
 
 def build_workflow(
-    agent: ReasoningAgent,
+    agent_factory: Callable[[], ReasoningAgent],
     sources: list[PDFSource],
     actor: str,
     progress: Callable[[str], None] | None = None,
@@ -33,7 +33,10 @@ def build_workflow(
     def plan(state: WorkflowState) -> dict[str, object]:
         report("Planning concepts with the reasoning agent...")
         with processing_phase(timing, "Concept planning"):
-            result = agent.plan(state["language"], state.get("existing_ids", []))
+            try:
+                result = agent_factory().plan(state["language"], state.get("existing_ids", []))
+            except ValidationFailure as exc:
+                raise ValidationFailure(f"Concept planning failed: {exc}") from exc
         if result.language.casefold() == "auto":
             raise ValidationFailure("Agent must resolve auto to one concrete Bundle language")
         if state["language"].casefold() != "auto" and result.language != state["language"]:
@@ -54,7 +57,13 @@ def build_workflow(
             with processing_phase(
                 timing, f"Concept synthesis {current}/{len(planned)} ({concept.slug})"
             ):
-                drafts.append(agent.synthesize(concept, state["language"]))
+                try:
+                    draft = agent_factory().synthesize(concept, state["language"])
+                except ValidationFailure as exc:
+                    raise ValidationFailure(
+                        f"Concept synthesis failed for concepts/{concept.slug}: {exc}"
+                    ) from exc
+                drafts.append(draft)
         return {"drafts": drafts}
 
     def render_and_validate(state: WorkflowState) -> dict[str, object]:

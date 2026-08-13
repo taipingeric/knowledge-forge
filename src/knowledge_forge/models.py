@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-WORKFLOW_VERSION = "1"
+WORKFLOW_VERSION = "2"
 STATE_VERSION = 1
 CONCEPT_TYPES = ("Concept", "Definition", "Policy", "Procedure", "FAQ")
 

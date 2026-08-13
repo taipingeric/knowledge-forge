@@ -2,7 +2,7 @@
 
 [English](README.md) | 繁體中文
 
-Knowledge Forge 將團隊核准的 PDF 文件整理成符合 Google Open Knowledge Format 0.2 的 Wiki。它使用 LangGraph 編排固定 workflow，並讓單一 LangChain reasoning agent 負責跨文件的 concept planning 與 synthesis。
+Knowledge Forge 將團隊核准的 PDF 文件整理成符合 Google Open Knowledge Format 0.2 的 Wiki。它使用 LangGraph 編排固定 workflow，並以單一 LangChain reasoning-agent role 負責跨文件的 concept planning 與 synthesis；每個 planning 或 Concept synthesis task 都在隔離的 reasoning session 中執行。
 
 輸出的 Bundle 同時由 agent 與人維護：人工修改不會在下一次更新時被靜默覆蓋。非重疊變更會以 deterministic three-way merge 合併；同一結構區塊的衝突則維持 live Bundle 不變，產生可稽核的 reconciliation workspace。
 
@@ -76,6 +76,8 @@ uv run knowledge-forge generate \
   --language auto \
   --max-agent-steps 50
 ```
+
+對 `generate` 與需要 agent 的 `update` 而言，`--max-agent-steps` 是每個 reasoning task 可使用的 model calls 上限。Concept planning 取得一份獨立 budget，之後每個依序執行的 Concept synthesis 也各自取得全新 budget，因此複雜 Concept 不會耗用後續 Concepts 可用的 model calls。若某個 task 超過上限，錯誤會指出是 planning 或哪個 Concept，且不會發布 candidate Bundle。
 
 若 Responses-to-Bedrock gateway 無法 replay 多個 tool results，請明確選用 non-parallel compatibility mode：
 

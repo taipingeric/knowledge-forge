@@ -42,7 +42,14 @@ ModelOption = Annotated[str, typer.Option("--model", envvar="OPENAI_MODEL")]
 ApiKeyOption = Annotated[str, typer.Option(envvar="OPENAI_API_KEY", hide_input=True)]
 BaseUrlOption = Annotated[str | None, typer.Option("--base-url", envvar="OPENAI_BASE_URL")]
 LanguageOption = Annotated[str, typer.Option("--language")]
-StepOption = Annotated[int, typer.Option("--max-agent-steps", min=1)]
+StepOption = Annotated[
+    int,
+    typer.Option(
+        "--max-agent-steps",
+        min=1,
+        help="Maximum model calls for each planning or Concept synthesis task.",
+    ),
+]
 NoParallelToolCallsOption = Annotated[
     bool,
     typer.Option(

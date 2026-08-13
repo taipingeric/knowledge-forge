@@ -2,7 +2,7 @@
 
 English | [繁體中文](README-zh.md)
 
-Knowledge Forge turns team-approved PDF documents into a wiki that conforms to Google Open Knowledge Format 0.2. LangGraph orchestrates a fixed workflow, while one LangChain reasoning agent performs cross-document concept planning and synthesis.
+Knowledge Forge turns team-approved PDF documents into a wiki that conforms to Google Open Knowledge Format 0.2. LangGraph orchestrates a fixed workflow with one LangChain reasoning-agent role for cross-document concept planning and synthesis. Each planning or Concept synthesis task runs in an isolated reasoning session.
 
 Agents and people jointly maintain the resulting Bundle. A later update never silently overwrites human edits. A deterministic three-way merge combines non-overlapping changes. A conflict in the same structural block leaves the live Bundle unchanged and creates an auditable reconciliation workspace.
 
@@ -76,6 +76,8 @@ uv run knowledge-forge generate \
   --language auto \
   --max-agent-steps 50
 ```
+
+For `generate` and agent-backed `update`, `--max-agent-steps` is the maximum number of model calls for each reasoning task. Concept planning receives one independent budget, and every sequential Concept synthesis receives a fresh budget. A complex Concept therefore cannot consume the model calls available to later Concepts. If a task exceeds its limit, the error identifies planning or the affected Concept and the candidate Bundle is not published.
 
 For a Responses-to-Bedrock gateway that cannot replay multiple tool results, explicitly select non-parallel compatibility mode:
 

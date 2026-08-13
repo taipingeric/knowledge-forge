@@ -7,7 +7,14 @@ import yaml
 
 from knowledge_forge import application
 from knowledge_forge.errors import ReconciliationRequired, ValidationFailure
-from knowledge_forge.models import ConceptDraft, Evidence, PDFSource, SourcePage
+from knowledge_forge.models import (
+    ConceptDraft,
+    ConceptPlan,
+    Evidence,
+    PDFSource,
+    PlannedConcept,
+    SourcePage,
+)
 from knowledge_forge.okf import dump_markdown, parse_markdown, render_concept
 from knowledge_forge.sources import logical_resource, sha256_text
 from knowledge_forge.state import bundle_hash, load_state
@@ -75,7 +82,9 @@ def test_generate_and_deterministic_noop(
     tmp_path: Path, fake_runtime: tuple[list[PDFSource], list[str]]
 ) -> None:
     source_dir, output = generate_bundle(tmp_path)
-    assert load_state(output).generation.parallel_tool_calls is True
+    generation = load_state(output).generation
+    assert generation.parallel_tool_calls is True
+    assert generation.workflow_version == "2"
     before = bundle_hash(output, include_state=True)
     assert (
         application.update(
@@ -115,6 +124,68 @@ def test_generate_records_and_reports_non_parallel_compatibility_mode(
 
     assert progress[0] == "Tool-call mode: non-parallel compatibility."
     assert load_state(output).generation.parallel_tool_calls is False
+
+
+def test_isolated_reasoning_sessions_share_the_page_index_and_publish_nothing_on_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source_dir = tmp_path / "pdfs"
+    source_dir.mkdir()
+    output = tmp_path / "knowledge"
+    source = pdf()
+    indexes: list[object] = []
+
+    class FailingReasoningAgent:
+        def __init__(self, *, index: object, **_: object) -> None:
+            indexes.append(index)
+
+        def plan(self, language: str, existing_ids: list[str]) -> ConceptPlan:
+            return ConceptPlan(
+                language="English",
+                concepts=[
+                    PlannedConcept(
+                        slug=slug,
+                        title=slug.title(),
+                        type="Concept",
+                        description=f"Rules for {slug}.",
+                        search_queries=[slug],
+                    )
+                    for slug in ("alpha", "beta")
+                ],
+            )
+
+        def synthesize(self, planned: PlannedConcept, language: str) -> ConceptDraft:
+            if planned.slug == "beta":
+                raise ValidationFailure("Agent step budget exceeded (1 model call)")
+            return ConceptDraft(
+                slug=planned.slug,
+                title=planned.title,
+                type=planned.type,
+                description=planned.description,
+                body="# Rule\n\nAlpha.[^policy.pdf@p1]\n\n[^policy.pdf@p1]: Refund policy, page 1",
+                evidence=[Evidence(source_id=source.id, pages=[1])],
+            )
+
+    monkeypatch.setattr(application, "extract_sources", lambda _: [source])
+    monkeypatch.setattr(application, "ReasoningAgent", FailingReasoningAgent)
+
+    with pytest.raises(
+        ValidationFailure,
+        match=r"Concept synthesis failed for concepts/beta: Agent step budget exceeded",
+    ):
+        application.generate(
+            source=source_dir,
+            output=output,
+            model="fake-model",
+            api_key="secret",
+            base_url="https://models.example/v1",
+            language="auto",
+            max_agent_steps=1,
+        )
+
+    assert len(indexes) == 3
+    assert len({id(index) for index in indexes}) == 1
+    assert not output.exists()
 
 
 def test_nonoverlapping_human_edit_is_preserved_without_agent_call(

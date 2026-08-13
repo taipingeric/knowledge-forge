@@ -233,8 +233,9 @@ def _run_agent(
             except Exception:
                 index.close()
                 raise
-        with index:
-            agent = ReasoningAgent(
+
+        def agent_factory() -> ReasoningAgent:
+            return ReasoningAgent(
                 index=index,
                 sources=sources,
                 model=generation.model,
@@ -243,8 +244,10 @@ def _run_agent(
                 max_steps=generation.max_agent_steps,
                 parallel_tool_calls=generation.parallel_tool_calls,
             )
+
+        with index:
             graph = build_workflow(
-                agent,
+                agent_factory,
                 sources,
                 _actor(generation.model),
                 progress=progress,

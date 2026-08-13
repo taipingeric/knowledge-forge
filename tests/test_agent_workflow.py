@@ -627,10 +627,114 @@ class FakeReasoningAgent:
         )
 
 
+class IsolatedSessionAgent:
+    def __init__(self, session: int, calls: list[tuple[int, str]]) -> None:
+        self.session = session
+        self.calls = calls
+        self.remaining_steps = 1
+
+    def consume_full_budget(self, task: str) -> None:
+        if self.remaining_steps == 0:
+            raise ValidationFailure("Agent step budget exceeded (1 model call)")
+        self.remaining_steps -= 1
+        self.calls.append((self.session, task))
+
+    def plan(self, language: str, existing_ids: list[str]) -> ConceptPlan:
+        self.consume_full_budget("plan")
+        return ConceptPlan(
+            language="English",
+            concepts=[
+                PlannedConcept(
+                    slug=slug,
+                    title=slug.replace("-", " ").title(),
+                    type="Concept",
+                    description=f"Rules for {slug}.",
+                    search_queries=[slug],
+                )
+                for slug in ("alpha", "beta", "gamma")
+            ],
+        )
+
+    def synthesize(self, concept: PlannedConcept, language: str) -> ConceptDraft:
+        self.consume_full_budget(concept.slug)
+        return ConceptDraft(
+            slug=concept.slug,
+            title=concept.title,
+            type=concept.type,
+            description=concept.description,
+            body=(
+                f"# Rule\n\n{concept.title}.[^policy.pdf@p1]\n\n"
+                "[^policy.pdf@p1]: Refund policy, page 1"
+            ),
+            evidence=[Evidence(source_id="policy.pdf", pages=[1])],
+        )
+
+
+def test_every_workflow_task_can_use_a_full_isolated_reasoning_budget() -> None:
+    sessions: list[IsolatedSessionAgent] = []
+    calls: list[tuple[int, str]] = []
+
+    def agent_factory() -> IsolatedSessionAgent:
+        agent = IsolatedSessionAgent(len(sessions) + 1, calls)
+        sessions.append(agent)
+        return agent
+
+    graph = build_workflow(agent_factory, [pdf()], "knowledge-forge/fake")
+    result = graph.invoke({"language": "auto", "existing_ids": []})
+
+    assert calls == [(1, "plan"), (2, "alpha"), (3, "beta"), (4, "gamma")]
+    assert list(result["concepts"]) == [
+        "concepts/alpha",
+        "concepts/beta",
+        "concepts/gamma",
+    ]
+
+
+def test_workflow_identifies_the_concept_whose_reasoning_budget_failed() -> None:
+    calls: list[tuple[int, str]] = []
+
+    class FailingSessionAgent(IsolatedSessionAgent):
+        def synthesize(self, concept: PlannedConcept, language: str) -> ConceptDraft:
+            if concept.slug == "beta":
+                raise ValidationFailure("Agent step budget exceeded (2 model calls)")
+            return super().synthesize(concept, language)
+
+    session = 0
+
+    def agent_factory() -> FailingSessionAgent:
+        nonlocal session
+        session += 1
+        return FailingSessionAgent(session, calls)
+
+    graph = build_workflow(agent_factory, [pdf()], "knowledge-forge/fake")
+
+    with pytest.raises(
+        ValidationFailure,
+        match=r"Concept synthesis failed for concepts/beta: Agent step budget exceeded",
+    ):
+        graph.invoke({"language": "auto", "existing_ids": []})
+
+    assert calls == [(1, "plan"), (2, "alpha")]
+
+
+def test_workflow_identifies_a_planning_reasoning_budget_failure() -> None:
+    class FailingPlanningAgent:
+        def plan(self, language: str, existing_ids: list[str]) -> ConceptPlan:
+            raise ValidationFailure("Agent step budget exceeded (2 model calls)")
+
+    graph = build_workflow(FailingPlanningAgent, [pdf()], "knowledge-forge/fake")
+
+    with pytest.raises(
+        ValidationFailure,
+        match=r"Concept planning failed: Agent step budget exceeded",
+    ):
+        graph.invoke({"language": "auto", "existing_ids": []})
+
+
 def test_langgraph_workflow_returns_valid_concepts() -> None:
     progress: list[str] = []
     graph = build_workflow(
-        FakeReasoningAgent(), [pdf()], "knowledge-forge/fake", progress=progress.append
+        FakeReasoningAgent, [pdf()], "knowledge-forge/fake", progress=progress.append
     )
     result = graph.invoke({"language": "auto", "existing_ids": []})
     assert result["language"] == "English"
