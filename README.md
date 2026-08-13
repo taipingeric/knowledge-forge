@@ -88,7 +88,20 @@ uv run knowledge-forge generate \
 [knowledge-forge] Synthesizing concept 1/6: refund-policy
 ```
 
-These messages do not contain full PDF text, model responses, or API keys. The final result remains on stdout for use in shell pipelines.
+Each completed phase includes its duration, and the command ends with a total-duration summary:
+
+```text
+[knowledge-forge] PDF Source reading completed in 0.214s.
+[knowledge-forge] PDF indexing completed in 0.038s.
+[knowledge-forge] Concept planning completed in 12.481s.
+[knowledge-forge] Concept synthesis 1/6 (refund-policy) completed in 8.327s.
+[knowledge-forge] Concept rendering and validation completed in 0.006s.
+[knowledge-forge] Candidate Bundle writing and validation completed in 0.014s.
+[knowledge-forge] Atomic publication completed in 0.002s.
+[knowledge-forge] Total processing time: 61.842s.
+```
+
+On failure, completed phases and total elapsed time are still reported while the existing error and exit code are preserved. These messages do not contain full PDF text, model responses, or API keys. Timing and progress are operational stderr output only; they do not enter the OKF Bundle, Agent Baseline, Generation Identity, or private state. The final command result remains on stdout for use in shell pipelines.
 
 Update from the complete authoritative PDF set. `--source` is not the set of files changed in this run. It is the complete set of PDFs that the Team Knowledge Wiki must currently use:
 
@@ -187,7 +200,7 @@ Material, disputed, numeric, policy, or version-sensitive statements use page-le
 ## TODO
 
 - [ ] Make parallel tool calls configurable. The product behavior is parallel by default to reduce planning and synthesis latency. Because the current Responses-to-Bedrock test gateway cannot correctly receive multiple `toolResult` values, add a CLI argument that selects non-parallel compatibility mode. Default parallel mode must pass the gateway replay regression before release.
-- [ ] Add processing-time statistics. Record PDF reading, indexing, concept planning, each Concept synthesis, render and validation, publication, and total duration. Timing is operational output only and is not written into the deterministic Bundle or generation state.
+- [x] Add processing-time statistics for `generate`. PDF reading, indexing, concept planning, each Concept synthesis, render and validation, candidate writing and validation, publication, and total duration are reported without changing deterministic artifacts.
 
 ## Documentation maintenance
 

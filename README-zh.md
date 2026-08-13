@@ -88,7 +88,20 @@ uv run knowledge-forge generate \
 [knowledge-forge] Synthesizing concept 1/6: refund-policy
 ```
 
-這些訊息不包含 PDF 全文、模型回應或 API key；最終結果仍輸出到 stdout，方便 shell pipeline 分流。
+每個完成的階段都會顯示處理時間，命令結束時也會顯示總時間：
+
+```text
+[knowledge-forge] PDF Source reading completed in 0.214s.
+[knowledge-forge] PDF indexing completed in 0.038s.
+[knowledge-forge] Concept planning completed in 12.481s.
+[knowledge-forge] Concept synthesis 1/6 (refund-policy) completed in 8.327s.
+[knowledge-forge] Concept rendering and validation completed in 0.006s.
+[knowledge-forge] Candidate Bundle writing and validation completed in 0.014s.
+[knowledge-forge] Atomic publication completed in 0.002s.
+[knowledge-forge] Total processing time: 61.842s.
+```
+
+執行失敗時，Knowledge Forge 仍會回報已完成階段及總經過時間，並保留原有錯誤訊息與 exit code。這些訊息不包含 PDF 全文、模型回應或 API key。Timing 與 progress 僅輸出到 stderr，不會進入 OKF Bundle、Agent Baseline、Generation Identity 或 private state；最終命令結果仍輸出到 stdout，方便 shell pipeline 分流。
 
 以完整、權威的目前 PDF 集合更新。`--source` 不是「本次變更的檔案」，而是 Team Knowledge Wiki 當下應採用的全部 PDF：
 
@@ -187,7 +200,7 @@ sources:
 ## TODO
 
 - [ ] 支援可切換的 parallel tool calls。產品預設應使用平行呼叫，以降低 planning 與 synthesis 的等待時間；目前 Responses-to-Bedrock 測試 gateway 無法正確接收多個 `toolResult`，因此需加入 CLI 參數以選擇 non-parallel compatibility mode。預設平行模式在發布前必須通過 gateway replay regression test。
-- [ ] 加入處理時間統計。記錄 PDF 讀取、索引、concept planning、各 Concept synthesis、render/validation、publication 與整體執行時間；時間資訊僅供觀測，不寫入 deterministic Bundle 或 generation state。
+- [x] 加入 `generate` 處理時間統計。PDF 讀取、索引、concept planning、各 Concept synthesis、render/validation、candidate writing/validation、publication 與總時間都會顯示，且不改變 deterministic artifacts。
 
 ## 文件同步維護規則
 

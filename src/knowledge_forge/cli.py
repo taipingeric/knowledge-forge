@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from time import monotonic
 from typing import Annotated
 
 import typer
@@ -12,6 +13,7 @@ from .application import update as update_bundle
 from .application import verify as verify_concept
 from .errors import KnowledgeForgeError, ReconciliationRequired
 from .sources import extract_sources
+from .timing import ProcessingTimer
 from .validation import validate_bundle
 
 app = typer.Typer(
@@ -69,6 +71,7 @@ def generate(
     max_agent_steps: StepOption = 50,
 ) -> None:
     """Create a new OKF Bundle from the complete PDF source set."""
+    timing = ProcessingTimer(_show_progress, monotonic)
 
     def operation() -> None:
         generate_bundle(
@@ -80,10 +83,14 @@ def generate(
             language=language,
             max_agent_steps=max_agent_steps,
             progress=_show_progress,
+            timing=timing,
         )
         typer.echo(f"Generated OKF Bundle: {out.resolve()}")
 
-    _run(operation)
+    try:
+        _run(operation)
+    finally:
+        timing.report_total()
 
 
 @app.command()

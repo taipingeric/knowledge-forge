@@ -44,6 +44,7 @@ from .state import (
     write_baseline,
     write_state,
 )
+from .timing import ProcessingTimer, processing_phase
 from .validation import validate_bundle
 from .workflow import build_workflow
 
@@ -217,16 +218,23 @@ def _run_agent(
     base_url: str | None,
     existing_ids: list[str],
     progress: Callable[[str], None] | None = None,
+    timing: ProcessingTimer | None = None,
 ) -> tuple[dict[str, str], str]:
     if not api_key.strip():
         raise ValidationFailure("OPENAI_API_KEY must not be empty")
     temporary = Path(tempfile.mkdtemp(prefix="knowledge-forge-fts-"))
     report = progress or (lambda _: None)
     try:
-        with PageIndex(temporary / "pages.sqlite") as index:
-            page_count = sum(len(source.pages) for source in sources)
-            report(f"Indexing {page_count} pages from {len(sources)} PDFs...")
-            index.add(sources)
+        page_count = sum(len(source.pages) for source in sources)
+        report(f"Indexing {page_count} pages from {len(sources)} PDFs...")
+        with processing_phase(timing, "PDF indexing"):
+            index = PageIndex(temporary / "pages.sqlite")
+            try:
+                index.add(sources)
+            except Exception:
+                index.close()
+                raise
+        with index:
             agent = ReasoningAgent(
                 index=index,
                 sources=sources,
@@ -240,6 +248,7 @@ def _run_agent(
                 sources,
                 _actor(generation.model),
                 progress=progress,
+                timing=timing,
             )
             result = graph.invoke(
                 {"language": generation.language, "existing_ids": existing_ids},
@@ -260,6 +269,7 @@ def generate(
     language: str,
     max_agent_steps: int,
     progress: Callable[[str], None] | None = None,
+    timing: ProcessingTimer | None = None,
 ) -> None:
     reject_tracing()
     with output_lock(output.resolve()):
@@ -272,6 +282,7 @@ def generate(
             language=language,
             max_agent_steps=max_agent_steps,
             progress=progress,
+            timing=timing,
         )
 
 
@@ -285,13 +296,15 @@ def _generate_locked(
     language: str,
     max_agent_steps: int,
     progress: Callable[[str], None] | None = None,
+    timing: ProcessingTimer | None = None,
 ) -> None:
     report = progress or (lambda _: None)
     output = output.resolve()
     if output.exists() and (not output.is_dir() or any(output.iterdir())):
         raise ValidationFailure("generate requires a missing or empty --out directory")
     report("Reading PDF sources...")
-    sources = extract_sources(source)
+    with processing_phase(timing, "PDF Source reading"):
+        sources = extract_sources(source)
     report(f"Loaded {len(sources)} PDFs with {sum(len(item.pages) for item in sources)} pages.")
     identity = generation_identity(
         model=model, base_url=base_url, language=language, max_agent_steps=max_agent_steps
@@ -303,23 +316,26 @@ def _generate_locked(
         base_url=base_url,
         existing_ids=[],
         progress=progress,
+        timing=timing,
     )
     identity.output_language = output_language
     report("Writing and validating the candidate bundle...")
     with staged_bundle(output, copy_existing=False) as staging:
-        _write_bundle(
-            staging,
-            concepts=concepts,
-            baselines=concepts,
-            ownership={concept_id: "agent" for concept_id in concepts},
-            sources=sources,
-            generation=identity,
-            previous_state=None,
-            action="Generation",
-            log_detail=f"Created {len(concepts)} Concepts from {len(sources)} PDF sources.",
-        )
+        with processing_phase(timing, "Candidate Bundle writing and validation"):
+            _write_bundle(
+                staging,
+                concepts=concepts,
+                baselines=concepts,
+                ownership={concept_id: "agent" for concept_id in concepts},
+                sources=sources,
+                generation=identity,
+                previous_state=None,
+                action="Generation",
+                log_detail=f"Created {len(concepts)} Concepts from {len(sources)} PDF sources.",
+            )
         report("Publishing the bundle atomically...")
-        publish_staging(staging, output)
+        with processing_phase(timing, "Atomic publication"):
+            publish_staging(staging, output)
 
 
 def _register_human_concepts(current: dict[str, str], state: ForgeState) -> dict[str, str]:
