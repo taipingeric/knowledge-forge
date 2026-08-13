@@ -215,7 +215,6 @@ def _run_agent(
     sources: list[PDFSource],
     generation: GenerationIdentity,
     api_key: str,
-    base_url: str | None,
     existing_ids: list[str],
     progress: Callable[[str], None] | None = None,
     timing: ProcessingTimer | None = None,
@@ -240,8 +239,9 @@ def _run_agent(
                 sources=sources,
                 model=generation.model,
                 api_key=api_key,
-                base_url=base_url,
+                base_url=generation.endpoint,
                 max_steps=generation.max_agent_steps,
+                parallel_tool_calls=generation.parallel_tool_calls,
             )
             graph = build_workflow(
                 agent,
@@ -268,19 +268,24 @@ def generate(
     base_url: str | None,
     language: str,
     max_agent_steps: int,
+    parallel_tool_calls: bool = True,
     progress: Callable[[str], None] | None = None,
     timing: ProcessingTimer | None = None,
 ) -> None:
     reject_tracing()
+    identity = generation_identity(
+        model=model,
+        base_url=base_url,
+        language=language,
+        max_agent_steps=max_agent_steps,
+        parallel_tool_calls=parallel_tool_calls,
+    )
     with output_lock(output.resolve()):
         _generate_locked(
             source=source,
             output=output,
-            model=model,
             api_key=api_key,
-            base_url=base_url,
-            language=language,
-            max_agent_steps=max_agent_steps,
+            generation=identity,
             progress=progress,
             timing=timing,
         )
@@ -290,11 +295,8 @@ def _generate_locked(
     *,
     source: Path,
     output: Path,
-    model: str,
     api_key: str,
-    base_url: str | None,
-    language: str,
-    max_agent_steps: int,
+    generation: GenerationIdentity,
     progress: Callable[[str], None] | None = None,
     timing: ProcessingTimer | None = None,
 ) -> None:
@@ -302,23 +304,24 @@ def _generate_locked(
     output = output.resolve()
     if output.exists() and (not output.is_dir() or any(output.iterdir())):
         raise ValidationFailure("generate requires a missing or empty --out directory")
+    report(
+        "Tool-call mode: parallel."
+        if generation.parallel_tool_calls
+        else "Tool-call mode: non-parallel compatibility."
+    )
     report("Reading PDF sources...")
     with processing_phase(timing, "PDF Source reading"):
         sources = extract_sources(source)
     report(f"Loaded {len(sources)} PDFs with {sum(len(item.pages) for item in sources)} pages.")
-    identity = generation_identity(
-        model=model, base_url=base_url, language=language, max_agent_steps=max_agent_steps
-    )
     concepts, output_language = _run_agent(
         sources=sources,
-        generation=identity,
+        generation=generation,
         api_key=api_key,
-        base_url=base_url,
         existing_ids=[],
         progress=progress,
         timing=timing,
     )
-    identity.output_language = output_language
+    generation.output_language = output_language
     report("Writing and validating the candidate bundle...")
     with staged_bundle(output, copy_existing=False) as staging:
         with processing_phase(timing, "Candidate Bundle writing and validation"):
@@ -328,7 +331,7 @@ def _generate_locked(
                 baselines=concepts,
                 ownership={concept_id: "agent" for concept_id in concepts},
                 sources=sources,
-                generation=identity,
+                generation=generation,
                 previous_state=None,
                 action="Generation",
                 log_detail=f"Created {len(concepts)} Concepts from {len(sources)} PDF sources.",
@@ -406,7 +409,11 @@ def _update_locked(
     sources = extract_sources(source)
     report(f"Loaded {len(sources)} PDFs with {sum(len(item.pages) for item in sources)} pages.")
     identity = generation_identity(
-        model=model, base_url=base_url, language=language, max_agent_steps=max_agent_steps
+        model=model,
+        base_url=base_url,
+        language=language,
+        max_agent_steps=max_agent_steps,
+        parallel_tool_calls=state.generation.parallel_tool_calls,
     )
     current = public_concepts(output)
     if (
@@ -437,7 +444,6 @@ def _update_locked(
             sources=sources,
             generation=identity,
             api_key=api_key,
-            base_url=base_url,
             existing_ids=sorted(current),
             progress=progress,
         )

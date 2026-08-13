@@ -73,8 +73,10 @@ def test_generate_shows_progress_on_stderr(tmp_path: Path, monkeypatch: pytest.M
     source = tmp_path / "pdfs"
     source.mkdir()
     output = tmp_path / "knowledge"
+    parallel_modes: list[bool] = []
 
     def fake_generate(**kwargs: object) -> None:
+        parallel_modes.append(bool(kwargs["parallel_tool_calls"]))
         progress = kwargs["progress"]
         assert callable(progress)
         progress("Planning concepts with the reasoning agent...")
@@ -103,6 +105,42 @@ def test_generate_shows_progress_on_stderr(tmp_path: Path, monkeypatch: pytest.M
         "[knowledge-forge] Planning concepts with the reasoning agent...",
         "[knowledge-forge] Total processing time: 1.000s.",
     ]
+    assert parallel_modes == [True]
+
+
+def test_generate_accepts_non_parallel_tool_call_compatibility_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "pdfs"
+    source.mkdir()
+    output = tmp_path / "knowledge"
+    parallel_modes: list[bool] = []
+
+    def fake_generate(**kwargs: object) -> None:
+        parallel_modes.append(bool(kwargs["parallel_tool_calls"]))
+
+    monkeypatch.setattr(cli, "generate_bundle", fake_generate)
+    clock = iter([0.0, 1.0])
+    monkeypatch.setattr(cli, "monotonic", clock.__next__)
+
+    result = CliRunner().invoke(
+        cli.app,
+        [
+            "generate",
+            "--source",
+            str(source),
+            "--out",
+            str(output),
+            "--model",
+            "fake-model",
+            "--api-key",
+            "secret",
+            "--no-parallel-tool-calls",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert parallel_modes == [False]
 
 
 class TickingClock:
@@ -179,6 +217,7 @@ def test_generate_reports_processing_time_without_changing_command_output_or_bun
     assert result.exit_code == 0
     assert result.stdout.strip() == f"Generated OKF Bundle: {output.resolve()}"
     assert result.stderr.splitlines() == [
+        "[knowledge-forge] Tool-call mode: parallel.",
         "[knowledge-forge] Reading PDF sources...",
         "[knowledge-forge] PDF Source reading completed in 1.000s.",
         "[knowledge-forge] Loaded 1 PDFs with 1 pages.",
@@ -235,6 +274,7 @@ def test_failed_generate_reports_total_time_and_preserves_exit_code(
     assert result.exit_code == 2
     assert result.stdout == ""
     assert result.stderr.splitlines() == [
+        "[knowledge-forge] Tool-call mode: parallel.",
         "[knowledge-forge] Reading PDF sources...",
         "Error: PDF Source failed",
         "[knowledge-forge] Total processing time: 2.000s.",

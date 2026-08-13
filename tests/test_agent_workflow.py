@@ -267,7 +267,7 @@ def test_reasoning_agent_forces_responses_api_without_storage(
 
     assert captured["use_responses_api"] is True
     assert captured["store"] is False
-    assert captured["model_kwargs"] == {"parallel_tool_calls": False}
+    assert captured["model_kwargs"] == {"parallel_tool_calls": True}
 
 
 def _responses_payload(output: list[dict[str, object]], response_id: str) -> dict[str, object]:
@@ -381,6 +381,7 @@ def test_agent_serializes_tool_calls_when_bedrock_gateway_ignores_parallel_flag(
             api_key="secret",
             base_url="https://models.example/v1",
             max_steps=10,
+            parallel_tool_calls=False,
         )
         plan = agent.plan("auto", [])
 
@@ -392,6 +393,81 @@ def test_agent_serializes_tool_calls_when_bedrock_gateway_ignores_parallel_flag(
     ]
     assert [item["call_id"] for item in replay if item.get("type") == "function_call_output"] == [
         "call_search"
+    ]
+
+
+def test_agent_replays_every_parallel_tool_call_and_matching_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    requests: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        requests.append(payload)
+        inputs = payload["input"]
+        function_calls = [item for item in inputs if item.get("type") == "function_call"]
+        if not function_calls:
+            return httpx.Response(
+                200,
+                json=_responses_payload(
+                    [
+                        _function_call("search_pages", "call_search", {"query": "refunds"}),
+                        _function_call(
+                            "read_pages", "call_read", {"source_id": "policy.pdf", "pages": [1]}
+                        ),
+                    ],
+                    "resp_parallel_tools",
+                ),
+            )
+
+        plan = {
+            "language": "English",
+            "concepts": [
+                {
+                    "slug": "refund-policy",
+                    "title": "Refund policy",
+                    "type": "Policy",
+                    "description": "Rules.",
+                    "search_queries": ["refund"],
+                }
+            ],
+        }
+        return httpx.Response(
+            200,
+            json=_responses_payload(
+                [_function_call("ConceptPlan", "call_plan", plan)], "resp_parallel_plan"
+            ),
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    real_model = agent_module.ChatOpenAI
+
+    def fake_model(**kwargs: object) -> object:
+        return real_model(**kwargs, http_client=client)
+
+    monkeypatch.setattr(agent_module, "ChatOpenAI", fake_model)
+    with PageIndex(tmp_path / "pages.sqlite") as index:
+        index.add([pdf()])
+        agent = ReasoningAgent(
+            index=index,
+            sources=[pdf()],
+            model="fake",
+            api_key="secret",
+            base_url="https://models.example/v1",
+            max_steps=10,
+        )
+        plan = agent.plan("auto", [])
+
+    assert plan.concepts[0].slug == "refund-policy"
+    assert all(request["parallel_tool_calls"] is True for request in requests)
+    replay = requests[1]["input"]
+    assert [item["call_id"] for item in replay if item.get("type") == "function_call"] == [
+        "call_search",
+        "call_read",
+    ]
+    assert [item["call_id"] for item in replay if item.get("type") == "function_call_output"] == [
+        "call_search",
+        "call_read",
     ]
 
 

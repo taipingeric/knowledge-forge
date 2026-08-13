@@ -38,7 +38,12 @@ def endpoint_identity(base_url: str | None) -> str:
 
 
 def generation_identity(
-    *, model: str, base_url: str | None, language: str, max_agent_steps: int
+    *,
+    model: str,
+    base_url: str | None,
+    language: str,
+    max_agent_steps: int,
+    parallel_tool_calls: bool,
 ) -> GenerationIdentity:
     if not model.strip():
         raise ValidationFailure("Model must be set with --model or OPENAI_MODEL")
@@ -51,4 +56,5 @@ def generation_identity(
         endpoint=endpoint_identity(base_url),
         language=language,
         max_agent_steps=max_agent_steps,
+        parallel_tool_calls=parallel_tool_calls,
     )

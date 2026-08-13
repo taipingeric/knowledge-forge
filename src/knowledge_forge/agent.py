@@ -103,6 +103,7 @@ class ReasoningAgent:
         api_key: str,
         base_url: str | None,
         max_steps: int,
+        parallel_tool_calls: bool = True,
     ) -> None:
         self._index = index
         self._sources = {source.id: source for source in sources}
@@ -116,8 +117,9 @@ class ReasoningAgent:
             store=False,
             temperature=0,
             max_retries=0,
-            model_kwargs={"parallel_tool_calls": False},
+            model_kwargs={"parallel_tool_calls": parallel_tool_calls},
         )
+        self._parallel_tool_calls = parallel_tool_calls
 
         @tool
         def search_pages(query: str, limit: int = 10) -> str:
@@ -150,14 +152,16 @@ class ReasoningAgent:
                 raise ValidationFailure(
                     f"Agent step budget exceeded ({self._max_steps} model calls)"
                 )
+            middleware: list[Any] = [
+                ToolErrorMiddleware(_recover_invalid_search, tools=["search_pages"])
+            ]
+            if not self._parallel_tool_calls:
+                middleware.insert(0, _serialize_parallel_tool_calls)
             agent = create_agent(
                 model=self._model,
                 tools=self._tools,
                 system_prompt=SYSTEM_PROMPT,
-                middleware=[
-                    _serialize_parallel_tool_calls,
-                    ToolErrorMiddleware(_recover_invalid_search, tools=["search_pages"]),
-                ],
+                middleware=middleware,
                 response_format=ToolStrategy(schema, handle_errors=False),
             )
             repair = "" if not last_error else f"\nRepair the previous invalid result: {last_error}"

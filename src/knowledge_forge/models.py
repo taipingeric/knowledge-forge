@@ -98,6 +98,7 @@ class GenerationIdentity(BaseModel):
     language: str
     output_language: str | None = None
     max_agent_steps: int
+    parallel_tool_calls: bool = False
 
 
 class ForgeState(BaseModel):

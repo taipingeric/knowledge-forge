@@ -75,6 +75,7 @@ def test_generate_and_deterministic_noop(
     tmp_path: Path, fake_runtime: tuple[list[PDFSource], list[str]]
 ) -> None:
     source_dir, output = generate_bundle(tmp_path)
+    assert load_state(output).generation.parallel_tool_calls is True
     before = bundle_hash(output, include_state=True)
     assert (
         application.update(
@@ -90,6 +91,30 @@ def test_generate_and_deterministic_noop(
     )
     assert bundle_hash(output, include_state=True) == before
     validate_bundle(output)
+
+
+def test_generate_records_and_reports_non_parallel_compatibility_mode(
+    tmp_path: Path, fake_runtime: tuple[list[PDFSource], list[str]]
+) -> None:
+    source_dir = tmp_path / "pdfs"
+    source_dir.mkdir()
+    output = tmp_path / "knowledge"
+    progress: list[str] = []
+
+    application.generate(
+        source=source_dir,
+        output=output,
+        model="fake-model",
+        api_key="secret",
+        base_url="https://models.example/v1",
+        language="auto",
+        max_agent_steps=50,
+        parallel_tool_calls=False,
+        progress=progress.append,
+    )
+
+    assert progress[0] == "Tool-call mode: non-parallel compatibility."
+    assert load_state(output).generation.parallel_tool_calls is False
 
 
 def test_nonoverlapping_human_edit_is_preserved_without_agent_call(

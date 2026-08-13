@@ -43,7 +43,7 @@ OPENAI_BASE_URL=https://models.example/v1
 
 Knowledge Forge 只讀取執行命令時所在目錄的 `.env`，不會向父目錄搜尋。CLI 參數與既有 process environment 優先於 `.env`，因此 CI、container 或 secret manager 注入的設定不會被本機檔案覆蓋。
 
-自訂 `OPENAI_BASE_URL` 必須相容 OpenAI Responses API（`/v1/responses`）、function calling 與 structured tool output；只有 `/v1/chat/completions` 的服務無法使用。為相容 Responses-to-Bedrock gateways 的 tool-result 排序限制，Knowledge Forge 目前會要求停用 parallel tool calls；若 gateway 或下游模型忽略該旗標，LangChain middleware 也會在本機把每輪 calls 正規化成單一 call。
+自訂 `OPENAI_BASE_URL` 必須相容 OpenAI Responses API（`/v1/responses`）、function calling 與 structured tool output；只有 `/v1/chat/completions` 的服務無法使用。Knowledge Forge 預設允許 parallel tool calls，並在 Responses replay 中保留每個模型發出的 call 及其對應結果。
 
 也可以直接使用 process environment：
 
@@ -77,9 +77,21 @@ uv run knowledge-forge generate \
   --max-agent-steps 50
 ```
 
+若 Responses-to-Bedrock gateway 無法 replay 多個 tool results，請明確選用 non-parallel compatibility mode：
+
+```bash
+uv run knowledge-forge generate \
+  --source ./pdfs \
+  --out ./knowledge \
+  --no-parallel-tool-calls
+```
+
+Compatibility mode 會送出 `parallel_tool_calls: false`。若模型或 gateway 忽略該要求而仍回傳多個 calls，LangChain middleware 會在該輪以 deterministic 方式保留一個 call 及其對應結果。Provider API error 會立即失敗；Knowledge Forge 絕不自動切換模式。所選模式會顯示在 stderr，並寫入 Generation Identity。
+
 `generate` 與 `update` 會在 stderr 顯示目前階段；concept 數量確定後，也會顯示 synthesis 進度：
 
 ```text
+[knowledge-forge] Tool-call mode: parallel.
 [knowledge-forge] Reading PDF sources...
 [knowledge-forge] Loaded 3 PDFs with 84 pages.
 [knowledge-forge] Indexing 84 pages from 3 PDFs...
@@ -199,7 +211,7 @@ sources:
 
 ## TODO
 
-- [ ] 支援可切換的 parallel tool calls。產品預設應使用平行呼叫，以降低 planning 與 synthesis 的等待時間；目前 Responses-to-Bedrock 測試 gateway 無法正確接收多個 `toolResult`，因此需加入 CLI 參數以選擇 non-parallel compatibility mode。預設平行模式在發布前必須通過 gateway replay regression test。
+- [x] 讓 `generate` 可切換 parallel tool calls。預設模式保留並 replay 所有平行 calls；`--no-parallel-tool-calls` 為受影響的 gateways 選用 deterministic single-call compatibility。Provider failure 絕不觸發自動 fallback。
 - [x] 加入 `generate` 處理時間統計。PDF 讀取、索引、concept planning、各 Concept synthesis、render/validation、candidate writing/validation、publication 與總時間都會顯示，且不改變 deterministic artifacts。
 
 ## 文件同步維護規則

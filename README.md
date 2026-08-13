@@ -43,7 +43,7 @@ OPENAI_BASE_URL=https://models.example/v1
 
 Knowledge Forge reads only the `.env` in the command's working directory. It does not search parent directories. CLI arguments and existing process environment variables take precedence over `.env`, so local files do not override values injected by CI, containers, or secret managers.
 
-A custom `OPENAI_BASE_URL` must support the OpenAI Responses API (`/v1/responses`), function calling, and structured tool output. A service that implements only `/v1/chat/completions` cannot be used. Knowledge Forge currently requests non-parallel tool calls to work around tool-result ordering defects in Responses-to-Bedrock gateways. If a gateway or downstream model ignores that setting, LangChain middleware locally normalizes each turn to one tool call.
+A custom `OPENAI_BASE_URL` must support the OpenAI Responses API (`/v1/responses`), function calling, and structured tool output. A service that implements only `/v1/chat/completions` cannot be used. Knowledge Forge allows parallel tool calls by default and preserves every model-issued call with its matching result during Responses replay.
 
 You can also use the process environment directly:
 
@@ -77,9 +77,21 @@ uv run knowledge-forge generate \
   --max-agent-steps 50
 ```
 
+For a Responses-to-Bedrock gateway that cannot replay multiple tool results, explicitly select non-parallel compatibility mode:
+
+```bash
+uv run knowledge-forge generate \
+  --source ./pdfs \
+  --out ./knowledge \
+  --no-parallel-tool-calls
+```
+
+Compatibility mode sends `parallel_tool_calls: false`. If the model or gateway ignores that request and still returns multiple calls, LangChain middleware deterministically keeps one call and its matching result for that turn. Provider API errors fail immediately; Knowledge Forge never switches modes automatically. The selected mode is shown on stderr and stored in the Generation Identity.
+
 `generate` and `update` show the current phase on stderr. After the concept count is known, they also show synthesis progress:
 
 ```text
+[knowledge-forge] Tool-call mode: parallel.
 [knowledge-forge] Reading PDF sources...
 [knowledge-forge] Loaded 3 PDFs with 84 pages.
 [knowledge-forge] Indexing 84 pages from 3 PDFs...
@@ -199,7 +211,7 @@ Material, disputed, numeric, policy, or version-sensitive statements use page-le
 
 ## TODO
 
-- [ ] Make parallel tool calls configurable. The product behavior is parallel by default to reduce planning and synthesis latency. Because the current Responses-to-Bedrock test gateway cannot correctly receive multiple `toolResult` values, add a CLI argument that selects non-parallel compatibility mode. Default parallel mode must pass the gateway replay regression before release.
+- [x] Make parallel tool calls configurable for `generate`. The default preserves and replays all parallel calls; `--no-parallel-tool-calls` selects deterministic single-call compatibility for affected gateways. Provider failures never trigger an automatic fallback.
 - [x] Add processing-time statistics for `generate`. PDF reading, indexing, concept planning, each Concept synthesis, render and validation, candidate writing and validation, publication, and total duration are reported without changing deterministic artifacts.
 
 ## Documentation maintenance

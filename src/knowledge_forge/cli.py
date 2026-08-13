@@ -43,6 +43,13 @@ ApiKeyOption = Annotated[str, typer.Option(envvar="OPENAI_API_KEY", hide_input=T
 BaseUrlOption = Annotated[str | None, typer.Option("--base-url", envvar="OPENAI_BASE_URL")]
 LanguageOption = Annotated[str, typer.Option("--language")]
 StepOption = Annotated[int, typer.Option("--max-agent-steps", min=1)]
+NoParallelToolCallsOption = Annotated[
+    bool,
+    typer.Option(
+        "--no-parallel-tool-calls",
+        help="Use serial tool calls for gateways that cannot replay parallel results.",
+    ),
+]
 
 
 def _show_progress(message: str) -> None:
@@ -69,6 +76,7 @@ def generate(
     base_url: BaseUrlOption = None,
     language: LanguageOption = "auto",
     max_agent_steps: StepOption = 50,
+    no_parallel_tool_calls: NoParallelToolCallsOption = False,
 ) -> None:
     """Create a new OKF Bundle from the complete PDF source set."""
     timing = ProcessingTimer(_show_progress, monotonic)
@@ -82,6 +90,7 @@ def generate(
             base_url=base_url,
             language=language,
             max_agent_steps=max_agent_steps,
+            parallel_tool_calls=not no_parallel_tool_calls,
             progress=_show_progress,
             timing=timing,
         )
