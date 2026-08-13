@@ -4,6 +4,7 @@ import ast
 import json
 import shutil
 import tempfile
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -215,12 +216,16 @@ def _run_agent(
     api_key: str,
     base_url: str | None,
     existing_ids: list[str],
+    progress: Callable[[str], None] | None = None,
 ) -> tuple[dict[str, str], str]:
     if not api_key.strip():
         raise ValidationFailure("OPENAI_API_KEY must not be empty")
     temporary = Path(tempfile.mkdtemp(prefix="knowledge-forge-fts-"))
+    report = progress or (lambda _: None)
     try:
         with PageIndex(temporary / "pages.sqlite") as index:
+            page_count = sum(len(source.pages) for source in sources)
+            report(f"Indexing {page_count} pages from {len(sources)} PDFs...")
             index.add(sources)
             agent = ReasoningAgent(
                 index=index,
@@ -230,7 +235,12 @@ def _run_agent(
                 base_url=base_url,
                 max_steps=generation.max_agent_steps,
             )
-            graph = build_workflow(agent, sources, _actor(generation.model))
+            graph = build_workflow(
+                agent,
+                sources,
+                _actor(generation.model),
+                progress=progress,
+            )
             result = graph.invoke(
                 {"language": generation.language, "existing_ids": existing_ids},
                 {"recursion_limit": 10},
@@ -249,6 +259,7 @@ def generate(
     base_url: str | None,
     language: str,
     max_agent_steps: int,
+    progress: Callable[[str], None] | None = None,
 ) -> None:
     reject_tracing()
     with output_lock(output.resolve()):
@@ -260,6 +271,7 @@ def generate(
             base_url=base_url,
             language=language,
             max_agent_steps=max_agent_steps,
+            progress=progress,
         )
 
 
@@ -272,11 +284,15 @@ def _generate_locked(
     base_url: str | None,
     language: str,
     max_agent_steps: int,
+    progress: Callable[[str], None] | None = None,
 ) -> None:
+    report = progress or (lambda _: None)
     output = output.resolve()
     if output.exists() and (not output.is_dir() or any(output.iterdir())):
         raise ValidationFailure("generate requires a missing or empty --out directory")
+    report("Reading PDF sources...")
     sources = extract_sources(source)
+    report(f"Loaded {len(sources)} PDFs with {sum(len(item.pages) for item in sources)} pages.")
     identity = generation_identity(
         model=model, base_url=base_url, language=language, max_agent_steps=max_agent_steps
     )
@@ -286,8 +302,10 @@ def _generate_locked(
         api_key=api_key,
         base_url=base_url,
         existing_ids=[],
+        progress=progress,
     )
     identity.output_language = output_language
+    report("Writing and validating the candidate bundle...")
     with staged_bundle(output, copy_existing=False) as staging:
         _write_bundle(
             staging,
@@ -300,6 +318,7 @@ def _generate_locked(
             action="Generation",
             log_detail=f"Created {len(concepts)} Concepts from {len(sources)} PDF sources.",
         )
+        report("Publishing the bundle atomically...")
         publish_staging(staging, output)
 
 
@@ -336,6 +355,7 @@ def update(
     base_url: str | None,
     language: str,
     max_agent_steps: int,
+    progress: Callable[[str], None] | None = None,
 ) -> bool:
     reject_tracing()
     with output_lock(output.resolve()):
@@ -347,6 +367,7 @@ def update(
             base_url=base_url,
             language=language,
             max_agent_steps=max_agent_steps,
+            progress=progress,
         )
 
 
@@ -359,10 +380,15 @@ def _update_locked(
     base_url: str | None,
     language: str,
     max_agent_steps: int,
+    progress: Callable[[str], None] | None = None,
 ) -> bool:
+    report = progress or (lambda _: None)
     output = output.resolve()
+    report("Validating the current bundle...")
     state = validate_bundle(output, for_mutation=True)
+    report("Reading PDF sources...")
     sources = extract_sources(source)
+    report(f"Loaded {len(sources)} PDFs with {sum(len(item.pages) for item in sources)} pages.")
     identity = generation_identity(
         model=model, base_url=base_url, language=language, max_agent_steps=max_agent_steps
     )
@@ -372,6 +398,7 @@ def _update_locked(
         and _same_generation_request(identity, state.generation)
         and bundle_hash(output) == state.bundle_hash
     ):
+        report("The source set and bundle are unchanged.")
         return False
 
     ownership = _register_human_concepts(current, state)
@@ -382,6 +409,7 @@ def _update_locked(
     }
     source_unchanged = source_set_hash(sources) == state.source_set_hash
     if source_unchanged and _same_generation_request(identity, state.generation):
+        report("Reusing the previous agent baseline; source evidence is unchanged.")
         identity = state.generation
         candidates = {
             concept_id: load_baseline(output, concept_id).raw_markdown
@@ -395,9 +423,11 @@ def _update_locked(
             api_key=api_key,
             base_url=base_url,
             existing_ids=sorted(current),
+            progress=progress,
         )
         identity.output_language = output_language
 
+    report("Merging agent candidates with human edits...")
     published: dict[str, str] = {}
     baselines: dict[str, str] = {}
     conflicts: list[Conflict] = []
@@ -503,6 +533,7 @@ def _update_locked(
             baselines[concept_id] = candidate_raw
             ownership[concept_id] = "agent"
 
+    report("Writing and validating the candidate bundle...")
     with staged_bundle(output, copy_existing=True) as staging:
         _write_bundle(
             staging,
@@ -517,8 +548,10 @@ def _update_locked(
             deleted=deleted,
         )
         if conflicts:
+            report("Conflicts require human reconciliation; preserving the current bundle.")
             _write_reconciliation(output, staging, state, sources, identity, conflicts)
             raise ReconciliationRequired(str(output.parent / f"{output.name}.reconciliation.md"))
+        report("Publishing the bundle atomically...")
         publish_staging(staging, output)
     return True
 

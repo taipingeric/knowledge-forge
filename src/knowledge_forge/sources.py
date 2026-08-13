@@ -8,7 +8,7 @@ from urllib.parse import quote
 
 from pypdf import PdfReader
 
-from .errors import ValidationFailure
+from .errors import SearchQueryFailure, ValidationFailure
 from .models import PDFSource, SourcePage
 
 
@@ -127,7 +127,7 @@ class PageIndex:
                     (query, limit),
                 ).fetchall()
         except sqlite3.OperationalError as exc:
-            raise ValidationFailure(f"Invalid full-text search query: {query!r}") from exc
+            raise SearchQueryFailure(f"Invalid full-text search query: {query!r}") from exc
         return [{"source_id": row[0], "page": int(row[1]), "snippet": row[2]} for row in rows]
 
     def read(self, source_id: str, pages: list[int]) -> list[dict[str, object]]:

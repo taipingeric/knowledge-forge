@@ -41,7 +41,7 @@ OPENAI_BASE_URL=https://models.example/v1
 
 Knowledge Forge 只讀取執行命令時所在目錄的 `.env`，不會向父目錄搜尋。CLI 參數與既有 process environment 優先於 `.env`，因此 CI、container 或 secret manager 注入的設定不會被本機檔案覆蓋。
 
-自訂 `OPENAI_BASE_URL` 必須相容 OpenAI Responses API（`/v1/responses`）、function calling 與 structured tool output；只有 `/v1/chat/completions` 的服務無法使用。
+自訂 `OPENAI_BASE_URL` 必須相容 OpenAI Responses API（`/v1/responses`）、function calling 與 structured tool output；只有 `/v1/chat/completions` 的服務無法使用。為相容 Responses-to-Bedrock gateways 的 tool-result 排序限制，Knowledge Forge 會要求停用 parallel tool calls；若 gateway 或下游模型忽略該旗標，LangChain middleware 也會在本機把每輪 calls 正規化成單一 call。
 
 也可以直接使用 process environment：
 
@@ -74,6 +74,19 @@ uv run knowledge-forge generate \
   --language auto \
   --max-agent-steps 50
 ```
+
+`generate` 與 `update` 會在 stderr 顯示目前階段；concept 數量確定後，也會顯示 synthesis 進度：
+
+```text
+[knowledge-forge] Reading PDF sources...
+[knowledge-forge] Loaded 3 PDFs with 84 pages.
+[knowledge-forge] Indexing 84 pages from 3 PDFs...
+[knowledge-forge] Planning concepts with the reasoning agent...
+[knowledge-forge] Planned 6 concepts in Traditional Chinese.
+[knowledge-forge] Synthesizing concept 1/6: refund-policy
+```
+
+這些訊息不包含 PDF 全文、模型回應或 API key；最終結果仍輸出到 stdout，方便 shell pipeline 分流。
 
 以完整、權威的目前 PDF 集合更新。`--source` 不是「本次變更的檔案」，而是 Wiki 當下應採用的全部 PDF：
 
@@ -168,6 +181,11 @@ sources:
 ```
 
 重大、爭議、數字、政策或版本敏感陳述使用 page-level footnote，例如 `[^policies/refunds.pdf@p3]`，並在正文加入同 label 的 footnote definition。
+
+## TODO
+
+- [ ] 支援可切換的 parallel tool calls。理想預設為平行呼叫，以降低 planning 與 synthesis 的等待時間；目前因 Responses-to-Bedrock gateway 無法正確接收多個 `toolResult`，暫時強制採用串行。為 `generate` 與 `update` 加入 CLI 參數，讓使用者可依 endpoint 相容性選擇平行或串行模式；啟用平行前須通過 gateway replay regression test。
+- [ ] 加入處理時間統計。記錄 PDF 讀取、索引、concept planning、各 Concept synthesis、render/validation、publication 與整體執行時間，並在 CLI 結束時輸出摘要；時間資訊僅供觀測，不寫入 deterministic Bundle 或 generation state。
 
 ## 開發
 

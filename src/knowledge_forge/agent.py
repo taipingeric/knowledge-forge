@@ -6,18 +6,57 @@ from typing import Any, TypeVar
 from uuid import UUID
 
 from langchain.agents import create_agent
+from langchain.agents.middleware import AgentState, ToolErrorMiddleware, after_model
+from langchain.agents.middleware.types import ToolCallRequest
 from langchain.agents.structured_output import ToolStrategy
 from langchain.messages import AIMessage
 from langchain.tools import tool
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_openai import ChatOpenAI
+from openai import APIError
 from pydantic import BaseModel
 
-from .errors import ValidationFailure
+from .errors import SearchQueryFailure, ValidationFailure
 from .models import ConceptDraft, ConceptPlan, PDFSource, PlannedConcept
+from .okf import render_concept, validate_concept
 from .sources import PageIndex
 
 ResultT = TypeVar("ResultT", bound=BaseModel)
+
+
+@after_model
+def _serialize_parallel_tool_calls(state: AgentState, _: Any) -> dict[str, object] | None:
+    """Keep one model-issued tool call so stateless Bedrock gateways can replay it."""
+    messages = state.get("messages", [])
+    if not messages or not isinstance(messages[-1], AIMessage):
+        return None
+    message = messages[-1]
+    if len(message.tool_calls) <= 1:
+        return None
+
+    kept_call = message.tool_calls[0]
+    content = message.content
+    if isinstance(content, list):
+        content = [
+            block
+            for block in content
+            if not (
+                isinstance(block, dict)
+                and block.get("type") in {"function_call", "tool_call", "custom_tool_call"}
+                and (block.get("call_id") or block.get("id")) != kept_call["id"]
+            )
+        ]
+    serialized = message.model_copy(update={"content": content, "tool_calls": [kept_call]})
+    return {"messages": [serialized]}
+
+
+def _recover_invalid_search(exc: Exception, _: ToolCallRequest) -> str | None:
+    if isinstance(exc, SearchQueryFailure):
+        return (
+            "The search query was invalid. Retry with plain words and remove or quote "
+            "punctuation such as hyphens."
+        )
+    return None
 
 
 class _StepCounter(BaseCallbackHandler):
@@ -77,6 +116,7 @@ class ReasoningAgent:
             store=False,
             temperature=0,
             max_retries=0,
+            model_kwargs={"parallel_tool_calls": False},
         )
 
         @tool
@@ -114,6 +154,10 @@ class ReasoningAgent:
                 model=self._model,
                 tools=self._tools,
                 system_prompt=SYSTEM_PROMPT,
+                middleware=[
+                    _serialize_parallel_tool_calls,
+                    ToolErrorMiddleware(_recover_invalid_search, tools=["search_pages"]),
+                ],
                 response_format=ToolStrategy(schema, handle_errors=False),
             )
             repair = "" if not last_error else f"\nRepair the previous invalid result: {last_error}"
@@ -139,6 +183,10 @@ class ReasoningAgent:
                 return validated
             except ValidationFailure:
                 raise
+            except APIError as exc:
+                if not counted:
+                    self._steps += counter.count
+                raise ValidationFailure(f"Model request failed: {exc}") from exc
             except Exception as exc:
                 if not counted:
                     self._steps += counter.count
@@ -177,6 +225,12 @@ class ReasoningAgent:
         )
 
     def synthesize(self, concept: PlannedConcept, language: str) -> ConceptDraft:
+        source_contract = [
+            {"id": source.id, "pages": f"1-{len(source.pages)}"}
+            for source in self._sources.values()
+        ]
+        valid_source_ids = sorted(self._sources)
+
         def validate_draft(draft: ConceptDraft) -> None:
             if draft.slug != concept.slug:
                 raise ValueError(
@@ -185,18 +239,33 @@ class ReasoningAgent:
             for evidence in draft.evidence:
                 source = self._sources.get(evidence.source_id)
                 if source is None:
-                    raise ValueError(f"unknown source ID {evidence.source_id!r}")
+                    raise ValueError(
+                        f"unknown source ID {evidence.source_id!r}; valid source IDs are "
+                        f"{valid_source_ids!r}. Placeholder or sentinel source IDs are forbidden"
+                    )
                 if max(evidence.pages) > len(source.pages):
                     raise ValueError(
                         f"page outside {evidence.source_id!r} bounds ({len(source.pages)})"
                     )
+            source_pages = {
+                source_id: len(source.pages) for source_id, source in self._sources.items()
+            }
+            rendered = render_concept(draft, self._sources, "knowledge-forge/validation")
+            errors = validate_concept(rendered, f"concepts/{draft.slug}", source_pages)
+            if errors:
+                raise ValueError("; ".join(errors))
 
         draft = self._invoke(
             ConceptDraft,
             f"Synthesize this planned concept in {language}: "
             f"{concept.model_dump_json()}. Search and read all relevant pages. Produce cohesive "
             "Markdown organized with meaningful headings. Evidence must list every PDF/page range "
-            "used, and no unsupported factual claims may appear.",
+            "used, and no unsupported factual claims may appear. Valid source IDs and page bounds: "
+            f"{json.dumps(source_contract, ensure_ascii=False)}. Use only those exact source IDs. "
+            "Copy the complete source ID verbatim into every Markdown citation label and its "
+            "footnote definition; never abbreviate a filename or replace it with initials. "
+            "Never use placeholder, sentinel, null, or invented source IDs. If initial searches "
+            "return no evidence, refine the search and read supporting pages before drafting.",
             validate_draft,
         )
         return draft

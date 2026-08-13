@@ -161,7 +161,7 @@ def validate_concept(
                 errors.append(f"{concept_id}: page outside source bounds for {source_id}")
         except ValidationFailure as exc:
             errors.append(f"{concept_id}: {exc}")
-    citations = CLAIM_CITATION.findall(body)
+    citations = list(dict.fromkeys(CLAIM_CITATION.findall(body)))
     definitions = set(FOOTNOTE_DEFINITION.findall(body))
     for source_id, page_spec in citations:
         if source_id not in source_ids:

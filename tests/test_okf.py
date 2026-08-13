@@ -58,3 +58,20 @@ def test_citation_source_id_may_contain_at_sign() -> None:
     )
     raw = render_concept(draft, {pdf.id: pdf}, "knowledge-forge/test")
     assert validate_concept(raw, "concepts/refund-policy", {pdf.id: 5}) == []
+
+
+def test_repeated_invalid_citation_is_reported_once() -> None:
+    pdf = source()
+    draft = ConceptDraft(
+        slug="refund-policy",
+        title="Refund Policy",
+        type="Policy",
+        description="The rules for refunds.",
+        body=("# Rule\n\nFirst claim.[^hpm@p2] Second claim.[^hpm@p2]\n\n[^hpm@p2]: HPM, page 2"),
+        evidence=[Evidence(source_id=pdf.id, pages=[2])],
+    )
+    raw = render_concept(draft, {pdf.id: pdf}, "knowledge-forge/test")
+
+    errors = validate_concept(raw, "concepts/refund-policy", {pdf.id: 5})
+
+    assert errors.count("concepts/refund-policy: citation references missing source hpm") == 1

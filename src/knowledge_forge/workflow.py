@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -18,10 +19,17 @@ class WorkflowState(TypedDict, total=False):
     concepts: dict[str, str]
 
 
-def build_workflow(agent: ReasoningAgent, sources: list[PDFSource], actor: str):
+def build_workflow(
+    agent: ReasoningAgent,
+    sources: list[PDFSource],
+    actor: str,
+    progress: Callable[[str], None] | None = None,
+):
     source_map = {source.id: source for source in sources}
+    report = progress or (lambda _: None)
 
     def plan(state: WorkflowState) -> dict[str, object]:
+        report("Planning concepts with the reasoning agent...")
         result = agent.plan(state["language"], state.get("existing_ids", []))
         if result.language.casefold() == "auto":
             raise ValidationFailure("Agent must resolve auto to one concrete Bundle language")
@@ -32,15 +40,19 @@ def build_workflow(agent: ReasoningAgent, sources: list[PDFSource], actor: str):
         slugs = [concept.slug for concept in result.concepts]
         if len(slugs) != len(set(slugs)):
             raise ValidationFailure("Agent planned duplicate Concept slugs")
+        report(f"Planned {len(result.concepts)} concepts in {result.language}.")
         return {"plan": result, "language": result.language}
 
     def synthesize(state: WorkflowState) -> dict[str, object]:
-        drafts = [
-            agent.synthesize(concept, state["language"]) for concept in state["plan"].concepts
-        ]
+        planned = state["plan"].concepts
+        drafts: list[ConceptDraft] = []
+        for current, concept in enumerate(planned, start=1):
+            report(f"Synthesizing concept {current}/{len(planned)}: {concept.slug}")
+            drafts.append(agent.synthesize(concept, state["language"]))
         return {"drafts": drafts}
 
     def render_and_validate(state: WorkflowState) -> dict[str, object]:
+        report(f"Rendering and validating {len(state['drafts'])} concepts...")
         concepts: dict[str, str] = {}
         errors: list[str] = []
         page_counts = {source.id: len(source.pages) for source in sources}
@@ -51,6 +63,7 @@ def build_workflow(agent: ReasoningAgent, sources: list[PDFSource], actor: str):
             concepts[concept_id] = raw
         if errors:
             raise ValidationFailure("Generated Concepts are invalid:\n- " + "\n- ".join(errors))
+        report("Agent-generated concepts passed validation.")
         return {"concepts": concepts}
 
     graph = StateGraph(WorkflowState)

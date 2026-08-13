@@ -58,3 +58,36 @@ def test_console_entrypoint_loads_dotenv_before_starting_app(
     cli.main()
 
     assert observed == ["dotenv-model"]
+
+
+def test_generate_shows_progress_on_stderr(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = tmp_path / "pdfs"
+    source.mkdir()
+    output = tmp_path / "knowledge"
+
+    def fake_generate(**kwargs: object) -> None:
+        progress = kwargs["progress"]
+        assert callable(progress)
+        progress("Planning concepts with the reasoning agent...")
+
+    monkeypatch.setattr(cli, "generate_bundle", fake_generate)
+    result = CliRunner().invoke(
+        cli.app,
+        [
+            "generate",
+            "--source",
+            str(source),
+            "--out",
+            str(output),
+            "--model",
+            "fake-model",
+            "--api-key",
+            "secret",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == f"Generated OKF Bundle: {output.resolve()}"
+    assert result.stderr.strip() == (
+        "[knowledge-forge] Planning concepts with the reasoning agent..."
+    )

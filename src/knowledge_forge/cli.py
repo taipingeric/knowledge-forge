@@ -43,6 +43,10 @@ LanguageOption = Annotated[str, typer.Option("--language")]
 StepOption = Annotated[int, typer.Option("--max-agent-steps", min=1)]
 
 
+def _show_progress(message: str) -> None:
+    typer.echo(f"[knowledge-forge] {message}", err=True)
+
+
 def _run(operation) -> None:
     try:
         operation()
@@ -75,6 +79,7 @@ def generate(
             base_url=base_url,
             language=language,
             max_agent_steps=max_agent_steps,
+            progress=_show_progress,
         )
         typer.echo(f"Generated OKF Bundle: {out.resolve()}")
 
@@ -102,6 +107,7 @@ def update(
             base_url=base_url,
             language=language,
             max_agent_steps=max_agent_steps,
+            progress=_show_progress,
         )
         typer.echo(f"Updated OKF Bundle: {out.resolve()}" if changed else "No changes")
 
