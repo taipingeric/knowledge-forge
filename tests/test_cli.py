@@ -74,9 +74,11 @@ def test_generate_shows_progress_on_stderr(tmp_path: Path, monkeypatch: pytest.M
     source.mkdir()
     output = tmp_path / "knowledge"
     parallel_modes: list[bool] = []
+    concept_concurrencies: list[int] = []
 
     def fake_generate(**kwargs: object) -> None:
         parallel_modes.append(bool(kwargs["parallel_tool_calls"]))
+        concept_concurrencies.append(int(kwargs["concept_concurrency"]))
         progress = kwargs["progress"]
         assert callable(progress)
         progress("Planning concepts with the reasoning agent...")
@@ -106,6 +108,7 @@ def test_generate_shows_progress_on_stderr(tmp_path: Path, monkeypatch: pytest.M
         "[knowledge-forge] Total processing time: 1.000s.",
     ]
     assert parallel_modes == [True]
+    assert concept_concurrencies == [4]
 
 
 def test_generate_accepts_non_parallel_tool_call_compatibility_mode(
@@ -141,6 +144,70 @@ def test_generate_accepts_non_parallel_tool_call_compatibility_mode(
 
     assert result.exit_code == 0
     assert parallel_modes == [False]
+
+
+def test_generate_accepts_sequential_concept_synthesis(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "pdfs"
+    source.mkdir()
+    output = tmp_path / "knowledge"
+    configuration: list[tuple[int, bool]] = []
+
+    def fake_generate(**kwargs: object) -> None:
+        configuration.append(
+            (int(kwargs["concept_concurrency"]), bool(kwargs["parallel_tool_calls"]))
+        )
+
+    monkeypatch.setattr(cli, "generate_bundle", fake_generate)
+    clock = iter([0.0, 1.0])
+    monkeypatch.setattr(cli, "monotonic", clock.__next__)
+
+    result = CliRunner().invoke(
+        cli.app,
+        [
+            "generate",
+            "--source",
+            str(source),
+            "--out",
+            str(output),
+            "--model",
+            "fake-model",
+            "--api-key",
+            "secret",
+            "--concept-concurrency",
+            "1",
+            "--no-parallel-tool-calls",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert configuration == [(1, False)]
+
+
+def test_generate_rejects_non_positive_concept_concurrency(tmp_path: Path) -> None:
+    source = tmp_path / "pdfs"
+    source.mkdir()
+
+    result = CliRunner().invoke(
+        cli.app,
+        [
+            "generate",
+            "--source",
+            str(source),
+            "--out",
+            str(tmp_path / "knowledge"),
+            "--model",
+            "fake-model",
+            "--api-key",
+            "secret",
+            "--concept-concurrency",
+            "0",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "x>=1" in result.stderr
 
 
 class TickingClock:

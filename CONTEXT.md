@@ -49,5 +49,5 @@ An explicit decision to retain a human-authored block while both that block and 
 _Avoid_: Permanent lock, ignored conflict
 
 **Generation Identity**:
-The workflow version, model endpoint, model name, language, per-task step budget, and tool-call mode that identify how an agent candidate was produced.
+The workflow version, model endpoint, model name, language, per-task step budget, tool-call mode, and Concept concurrency that identify how an agent candidate was produced.
 _Avoid_: Run ID, model configuration

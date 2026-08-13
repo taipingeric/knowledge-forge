@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-WORKFLOW_VERSION = "2"
+WORKFLOW_VERSION = "3"
 STATE_VERSION = 1
 CONCEPT_TYPES = ("Concept", "Definition", "Policy", "Procedure", "FAQ")
 
@@ -99,6 +99,7 @@ class GenerationIdentity(BaseModel):
     output_language: str | None = None
     max_agent_steps: int
     parallel_tool_calls: bool = False
+    concept_concurrency: int = Field(default=1, ge=1)
 
 
 class ForgeState(BaseModel):

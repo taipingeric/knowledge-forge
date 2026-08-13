@@ -57,6 +57,14 @@ NoParallelToolCallsOption = Annotated[
         help="Use serial tool calls for gateways that cannot replay parallel results.",
     ),
 ]
+ConceptConcurrencyOption = Annotated[
+    int,
+    typer.Option(
+        "--concept-concurrency",
+        min=1,
+        help="Maximum Concept synthesis tasks to run concurrently.",
+    ),
+]
 
 
 def _show_progress(message: str) -> None:
@@ -84,6 +92,7 @@ def generate(
     language: LanguageOption = "auto",
     max_agent_steps: StepOption = 50,
     no_parallel_tool_calls: NoParallelToolCallsOption = False,
+    concept_concurrency: ConceptConcurrencyOption = 4,
 ) -> None:
     """Create a new OKF Bundle from the complete PDF source set."""
     timing = ProcessingTimer(_show_progress, monotonic)
@@ -98,6 +107,7 @@ def generate(
             language=language,
             max_agent_steps=max_agent_steps,
             parallel_tool_calls=not no_parallel_tool_calls,
+            concept_concurrency=concept_concurrency,
             progress=_show_progress,
             timing=timing,
         )

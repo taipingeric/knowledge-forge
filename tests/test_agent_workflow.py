@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 
 import httpx
@@ -19,6 +20,7 @@ from knowledge_forge.models import (
     SourcePage,
 )
 from knowledge_forge.sources import PageIndex, logical_resource, sha256_text
+from knowledge_forge.timing import ProcessingTimer
 from knowledge_forge.workflow import build_workflow
 
 
@@ -679,7 +681,7 @@ def test_every_workflow_task_can_use_a_full_isolated_reasoning_budget() -> None:
         sessions.append(agent)
         return agent
 
-    graph = build_workflow(agent_factory, [pdf()], "knowledge-forge/fake")
+    graph = build_workflow(agent_factory, [pdf()], "knowledge-forge/fake", concept_concurrency=1)
     result = graph.invoke({"language": "auto", "existing_ids": []})
 
     assert calls == [(1, "plan"), (2, "alpha"), (3, "beta"), (4, "gamma")]
@@ -688,6 +690,118 @@ def test_every_workflow_task_can_use_a_full_isolated_reasoning_budget() -> None:
         "concepts/beta",
         "concepts/gamma",
     ]
+
+
+def test_workflow_bounds_concurrent_synthesis_and_preserves_plan_order() -> None:
+    barrier = threading.Barrier(2)
+    state_lock = threading.Lock()
+    active = 0
+    maximum_active = 0
+    completion_order: list[str] = []
+    beta_completed = threading.Event()
+    session = 0
+    progress: list[str] = []
+    callback_lock = threading.Lock()
+    clock_lock = threading.Lock()
+    tick = 0.0
+
+    def report(message: str) -> None:
+        assert callback_lock.acquire(blocking=False), "progress callback ran concurrently"
+        try:
+            progress.append(message)
+        finally:
+            callback_lock.release()
+
+    def clock() -> float:
+        nonlocal tick
+        with clock_lock:
+            tick += 1.0
+            return tick
+
+    class ConcurrentSessionAgent(IsolatedSessionAgent):
+        def synthesize(self, concept: PlannedConcept, language: str) -> ConceptDraft:
+            nonlocal active, maximum_active
+            with state_lock:
+                active += 1
+                maximum_active = max(maximum_active, active)
+            if concept.slug in {"alpha", "beta"}:
+                barrier.wait()
+            draft = super().synthesize(concept, language)
+            if concept.slug == "beta":
+                completion_order.append(concept.slug)
+                beta_completed.set()
+            elif concept.slug == "alpha":
+                assert beta_completed.wait(timeout=1)
+                completion_order.append(concept.slug)
+            else:
+                completion_order.append(concept.slug)
+            with state_lock:
+                active -= 1
+            return draft
+
+    calls: list[tuple[int, str]] = []
+
+    def agent_factory() -> ConcurrentSessionAgent:
+        nonlocal session
+        session += 1
+        return ConcurrentSessionAgent(session, calls)
+
+    graph = build_workflow(
+        agent_factory,
+        [pdf()],
+        "knowledge-forge/fake",
+        concept_concurrency=2,
+        progress=report,
+        timing=ProcessingTimer(report, clock),
+    )
+    result = graph.invoke({"language": "auto", "existing_ids": []})
+
+    assert maximum_active == 2
+    assert completion_order[0] == "beta"
+    assert list(result["concepts"]) == [
+        "concepts/alpha",
+        "concepts/beta",
+        "concepts/gamma",
+    ]
+    for current, slug in enumerate(("alpha", "beta", "gamma"), start=1):
+        assert f"Synthesizing concept {current}/3: {slug}" in progress
+        assert any(
+            message.startswith(f"Concept synthesis {current}/3 ({slug}) completed in ")
+            for message in progress
+        )
+
+
+def test_concurrent_synthesis_drains_started_work_without_starting_more_after_failure() -> None:
+    first_pair_started = threading.Barrier(2)
+    failure_observed = threading.Event()
+    calls: list[tuple[int, str]] = []
+    session = 0
+
+    class FailingConcurrentAgent(IsolatedSessionAgent):
+        def synthesize(self, concept: PlannedConcept, language: str) -> ConceptDraft:
+            if concept.slug in {"alpha", "beta"}:
+                first_pair_started.wait()
+            if concept.slug == "beta":
+                failure_observed.set()
+                raise ValidationFailure("provider rejected beta")
+            if concept.slug == "alpha":
+                assert failure_observed.wait(timeout=1)
+            return super().synthesize(concept, language)
+
+    def agent_factory() -> FailingConcurrentAgent:
+        nonlocal session
+        session += 1
+        return FailingConcurrentAgent(session, calls)
+
+    graph = build_workflow(agent_factory, [pdf()], "knowledge-forge/fake", concept_concurrency=2)
+
+    with pytest.raises(
+        ValidationFailure,
+        match=r"Concept synthesis failed for concepts/beta: provider rejected beta",
+    ):
+        graph.invoke({"language": "auto", "existing_ids": []})
+
+    assert calls == [(1, "plan"), (2, "alpha")]
 
 
 def test_workflow_identifies_the_concept_whose_reasoning_budget_failed() -> None:
@@ -706,7 +820,7 @@ def test_workflow_identifies_the_concept_whose_reasoning_budget_failed() -> None
         session += 1
         return FailingSessionAgent(session, calls)
 
-    graph = build_workflow(agent_factory, [pdf()], "knowledge-forge/fake")
+    graph = build_workflow(agent_factory, [pdf()], "knowledge-forge/fake", concept_concurrency=1)
 
     with pytest.raises(
         ValidationFailure,
@@ -722,7 +836,9 @@ def test_workflow_identifies_a_planning_reasoning_budget_failure() -> None:
         def plan(self, language: str, existing_ids: list[str]) -> ConceptPlan:
             raise ValidationFailure("Agent step budget exceeded (2 model calls)")
 
-    graph = build_workflow(FailingPlanningAgent, [pdf()], "knowledge-forge/fake")
+    graph = build_workflow(
+        FailingPlanningAgent, [pdf()], "knowledge-forge/fake", concept_concurrency=1
+    )
 
     with pytest.raises(
         ValidationFailure,
@@ -734,7 +850,11 @@ def test_workflow_identifies_a_planning_reasoning_budget_failure() -> None:
 def test_langgraph_workflow_returns_valid_concepts() -> None:
     progress: list[str] = []
     graph = build_workflow(
-        FakeReasoningAgent, [pdf()], "knowledge-forge/fake", progress=progress.append
+        FakeReasoningAgent,
+        [pdf()],
+        "knowledge-forge/fake",
+        concept_concurrency=1,
+        progress=progress.append,
     )
     result = graph.invoke({"language": "auto", "existing_ids": []})
     assert result["language"] == "English"

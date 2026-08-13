@@ -44,6 +44,7 @@ def generation_identity(
     language: str,
     max_agent_steps: int,
     parallel_tool_calls: bool,
+    concept_concurrency: int,
 ) -> GenerationIdentity:
     if not model.strip():
         raise ValidationFailure("Model must be set with --model or OPENAI_MODEL")
@@ -51,10 +52,13 @@ def generation_identity(
         raise ValidationFailure("--language must not be empty")
     if max_agent_steps < 1:
         raise ValidationFailure("--max-agent-steps must be at least 1")
+    if concept_concurrency < 1:
+        raise ValidationFailure("--concept-concurrency must be at least 1")
     return GenerationIdentity(
         model=model,
         endpoint=endpoint_identity(base_url),
         language=language,
         max_agent_steps=max_agent_steps,
         parallel_tool_calls=parallel_tool_calls,
+        concept_concurrency=concept_concurrency,
     )

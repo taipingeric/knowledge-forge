@@ -250,6 +250,7 @@ def _run_agent(
                 agent_factory,
                 sources,
                 _actor(generation.model),
+                concept_concurrency=generation.concept_concurrency,
                 progress=progress,
                 timing=timing,
             )
@@ -272,6 +273,7 @@ def generate(
     language: str,
     max_agent_steps: int,
     parallel_tool_calls: bool = True,
+    concept_concurrency: int = 4,
     progress: Callable[[str], None] | None = None,
     timing: ProcessingTimer | None = None,
 ) -> None:
@@ -282,6 +284,7 @@ def generate(
         language=language,
         max_agent_steps=max_agent_steps,
         parallel_tool_calls=parallel_tool_calls,
+        concept_concurrency=concept_concurrency,
     )
     with output_lock(output.resolve()):
         _generate_locked(
@@ -417,6 +420,7 @@ def _update_locked(
         language=language,
         max_agent_steps=max_agent_steps,
         parallel_tool_calls=state.generation.parallel_tool_calls,
+        concept_concurrency=state.generation.concept_concurrency,
     )
     current = public_concepts(output)
     if (

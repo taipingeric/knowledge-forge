@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from typing import TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -9,7 +10,7 @@ from .agent import ReasoningAgent
 from .errors import ValidationFailure
 from .models import ConceptDraft, ConceptPlan, PDFSource
 from .okf import render_concept, validate_concept
-from .timing import ProcessingTimer, processing_phase
+from .timing import ProcessingTimer, ProgressReporter, processing_phase
 
 
 class WorkflowState(TypedDict, total=False):
@@ -24,11 +25,17 @@ def build_workflow(
     agent_factory: Callable[[], ReasoningAgent],
     sources: list[PDFSource],
     actor: str,
+    concept_concurrency: int = 1,
     progress: Callable[[str], None] | None = None,
     timing: ProcessingTimer | None = None,
 ):
     source_map = {source.id: source for source in sources}
-    report = progress or (lambda _: None)
+    reporter = (
+        timing.reporter if timing is not None else ProgressReporter(progress or (lambda _: None))
+    )
+
+    def report(message: str) -> None:
+        reporter.report(message)
 
     def plan(state: WorkflowState) -> dict[str, object]:
         report("Planning concepts with the reasoning agent...")
@@ -51,20 +58,39 @@ def build_workflow(
 
     def synthesize(state: WorkflowState) -> dict[str, object]:
         planned = state["plan"].concepts
-        drafts: list[ConceptDraft] = []
-        for current, concept in enumerate(planned, start=1):
+        total = len(planned)
+
+        def synthesize_one(current: int) -> ConceptDraft:
+            concept = planned[current - 1]
             report(f"Synthesizing concept {current}/{len(planned)}: {concept.slug}")
-            with processing_phase(
-                timing, f"Concept synthesis {current}/{len(planned)} ({concept.slug})"
-            ):
+            with processing_phase(timing, f"Concept synthesis {current}/{total} ({concept.slug})"):
                 try:
-                    draft = agent_factory().synthesize(concept, state["language"])
+                    return agent_factory().synthesize(concept, state["language"])
                 except ValidationFailure as exc:
                     raise ValidationFailure(
                         f"Concept synthesis failed for concepts/{concept.slug}: {exc}"
                     ) from exc
-                drafts.append(draft)
-        return {"drafts": drafts}
+
+        drafts: dict[int, ConceptDraft] = {}
+        with ThreadPoolExecutor(max_workers=concept_concurrency) as executor:
+            next_current = 1
+            futures: dict[Future[ConceptDraft], int] = {}
+            while next_current <= min(concept_concurrency, total):
+                futures[executor.submit(synthesize_one, next_current)] = next_current
+                next_current += 1
+            try:
+                while futures:
+                    completed, _ = wait(futures, return_when=FIRST_COMPLETED)
+                    for future in completed:
+                        drafts[futures.pop(future)] = future.result()
+                    while len(futures) < concept_concurrency and next_current <= total:
+                        futures[executor.submit(synthesize_one, next_current)] = next_current
+                        next_current += 1
+            except Exception:
+                for future in futures:
+                    future.cancel()
+                raise
+        return {"drafts": [drafts[current] for current in range(1, total + 1)]}
 
     def render_and_validate(state: WorkflowState) -> dict[str, object]:
         report(f"Rendering and validating {len(state['drafts'])} concepts...")

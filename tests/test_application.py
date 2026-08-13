@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 import pytest
@@ -84,7 +85,8 @@ def test_generate_and_deterministic_noop(
     source_dir, output = generate_bundle(tmp_path)
     generation = load_state(output).generation
     assert generation.parallel_tool_calls is True
-    assert generation.workflow_version == "2"
+    assert generation.concept_concurrency == 4
+    assert generation.workflow_version == "3"
     before = bundle_hash(output, include_state=True)
     assert (
         application.update(
@@ -119,11 +121,14 @@ def test_generate_records_and_reports_non_parallel_compatibility_mode(
         language="auto",
         max_agent_steps=50,
         parallel_tool_calls=False,
+        concept_concurrency=1,
         progress=progress.append,
     )
 
     assert progress[0] == "Tool-call mode: non-parallel compatibility."
-    assert load_state(output).generation.parallel_tool_calls is False
+    generation = load_state(output).generation
+    assert generation.parallel_tool_calls is False
+    assert generation.concept_concurrency == 1
 
 
 def test_isolated_reasoning_sessions_share_the_page_index_and_publish_nothing_on_failure(
@@ -134,10 +139,12 @@ def test_isolated_reasoning_sessions_share_the_page_index_and_publish_nothing_on
     output = tmp_path / "knowledge"
     source = pdf()
     indexes: list[object] = []
+    first_synthesis = threading.Barrier(2)
 
     class FailingReasoningAgent:
         def __init__(self, *, index: object, **_: object) -> None:
             indexes.append(index)
+            self.index = index
 
         def plan(self, language: str, existing_ids: list[str]) -> ConceptPlan:
             return ConceptPlan(
@@ -155,6 +162,9 @@ def test_isolated_reasoning_sessions_share_the_page_index_and_publish_nothing_on
             )
 
         def synthesize(self, planned: PlannedConcept, language: str) -> ConceptDraft:
+            first_synthesis.wait()
+            assert self.index.search("Refund")
+            assert self.index.read(source.id, [1])
             if planned.slug == "beta":
                 raise ValidationFailure("Agent step budget exceeded (1 model call)")
             return ConceptDraft(
@@ -181,6 +191,7 @@ def test_isolated_reasoning_sessions_share_the_page_index_and_publish_nothing_on
             base_url="https://models.example/v1",
             language="auto",
             max_agent_steps=1,
+            concept_concurrency=2,
         )
 
     assert len(indexes) == 3

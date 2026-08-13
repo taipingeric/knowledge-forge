@@ -74,10 +74,15 @@ uv run knowledge-forge generate \
   --source ./pdfs \
   --out ./knowledge \
   --language auto \
-  --max-agent-steps 50
+  --max-agent-steps 50 \
+  --concept-concurrency 4
 ```
 
-對 `generate` 與需要 agent 的 `update` 而言，`--max-agent-steps` 是每個 reasoning task 可使用的 model calls 上限。Concept planning 取得一份獨立 budget，之後每個依序執行的 Concept synthesis 也各自取得全新 budget，因此複雜 Concept 不會耗用後續 Concepts 可用的 model calls。若某個 task 超過上限，錯誤會指出是 planning 或哪個 Concept，且不會發布 candidate Bundle。
+對 `generate` 與需要 agent 的 `update` 而言，`--max-agent-steps` 是每個 reasoning task 可使用的 model calls 上限。Concept planning 取得一份獨立 budget，每個 Concept synthesis 也各自取得全新 budget，因此複雜 Concept 不會耗用後續 Concepts 可用的 model calls。若某個 task 超過上限，錯誤會指出是 planning 或哪個 Concept，且不會發布 candidate Bundle。
+
+Planning 完成後，`generate` 預設最多同時 synthesis 四個互不依賴的 Concept Documents。使用 `--concept-concurrency 1` 可恢復依序 synthesis，也可指定其他正整數，在 throughput 與 provider rate limit 之間取捨。Tasks 可以用不同順序完成，但 Bundle 仍按 ConceptPlan 順序組裝，且只有全部 Concepts 成功後才發布。所選 concurrency 是 Generation Identity 的一部分。
+
+Concept concurrency 與 parallel tool calls 是不同設定。`--concept-concurrency` 控制同時執行多少個 Concept synthesis tasks；每個 task 內的 parallel tool-call mode 則控制單次 model turn 能否要求多個 `search_pages` 或 `read_pages` calls。
 
 若 Responses-to-Bedrock gateway 無法 replay 多個 tool results，請明確選用 non-parallel compatibility mode：
 

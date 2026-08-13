@@ -74,10 +74,15 @@ uv run knowledge-forge generate \
   --source ./pdfs \
   --out ./knowledge \
   --language auto \
-  --max-agent-steps 50
+  --max-agent-steps 50 \
+  --concept-concurrency 4
 ```
 
-For `generate` and agent-backed `update`, `--max-agent-steps` is the maximum number of model calls for each reasoning task. Concept planning receives one independent budget, and every sequential Concept synthesis receives a fresh budget. A complex Concept therefore cannot consume the model calls available to later Concepts. If a task exceeds its limit, the error identifies planning or the affected Concept and the candidate Bundle is not published.
+For `generate` and agent-backed `update`, `--max-agent-steps` is the maximum number of model calls for each reasoning task. Concept planning receives one independent budget, and every Concept synthesis receives a fresh budget. A complex Concept therefore cannot consume the model calls available to later Concepts. If a task exceeds its limit, the error identifies planning or the affected Concept and the candidate Bundle is not published.
+
+After planning, `generate` synthesizes up to four independent Concept Documents concurrently by default. Set `--concept-concurrency 1` to run synthesis sequentially, or select another positive limit to balance throughput against provider rate limits. Tasks may complete in any order, but the Bundle is assembled in ConceptPlan order and is published only when every Concept succeeds. The selected concurrency is part of Generation Identity.
+
+Concept concurrency is separate from parallel tool calls. `--concept-concurrency` controls how many Concept synthesis tasks run at once. Within each task, parallel tool-call mode controls whether one model turn may request several `search_pages` or `read_pages` calls.
 
 For a Responses-to-Bedrock gateway that cannot replay multiple tool results, explicitly select non-parallel compatibility mode:
 
