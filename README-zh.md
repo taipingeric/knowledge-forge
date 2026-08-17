@@ -18,6 +18,20 @@ Knowledge Forge 將團隊核准的 PDF 文件整理成符合 Google Open Knowled
 
 PDF 內容被視為不可信資料，agent 沒有 shell、network 或任意檔案寫入工具。擷取出的 PDF 文字會送往設定的模型 endpoint；Knowledge Forge 不會把 PDF、擷取全文或 API key 寫入 Bundle。模型請求固定使用 Responses API 並設定 `store: false`。為避免內容被額外傳送，偵測到 LangSmith／LangChain tracing 開啟時會拒絕執行。
 
+## 來源與輸出隔離
+
+所有需要來源的操作（`generate`、`update`、`reconcile` 與 `verify`）都要求解析後的 `--source` 與 `--out` 目錄樹彼此完全分離。兩個路徑相同、輸出位於來源之下，或來源位於輸出之下時，Knowledge Forge 都會拒絕執行。系統會先解析兩個路徑，因此 `sources/../sources` 之類的相對路徑寫法無法繞過檢查。
+
+拒絕會發生在來源探索、模型設定驗證、模型呼叫、staging 或報告建立之前，因此 live Bundle 與 private state 會維持不存在或完全不變。請使用平行的目錄樹，例如：
+
+```text
+workspace/
+  sources/
+  knowledge/
+```
+
+來源探索採遞迴方式，目前沒有 manifest 或 ignore policy。`--source` 下的每個支援檔案都屬於權威 Input Corpus，因此必須維持乾淨的來源根目錄，或把團隊未核准作為 evidence 的資料實際移到目錄外。
+
 ## 安裝
 
 需要 Python 3.12 與 [uv](https://docs.astral.sh/uv/)：

@@ -98,6 +98,78 @@ def completed_phases(progress: list[str]) -> list[str]:
     ]
 
 
+def filesystem_snapshot(root: Path) -> list[tuple[str, bytes | None]]:
+    return [
+        (str(path.relative_to(root)), path.read_bytes() if path.is_file() else None)
+        for path in sorted(root.rglob("*"))
+    ]
+
+
+@pytest.mark.parametrize("operation", ["generate", "update", "reconcile", "verify"])
+@pytest.mark.parametrize(
+    "relationship", ["equal", "source-contains-output", "output-contains-source"]
+)
+def test_source_backed_operations_reject_overlapping_resolved_trees_before_work(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+    relationship: str,
+) -> None:
+    workspace = tmp_path / "workspace"
+    nested = workspace / "nested"
+    nested.mkdir(parents=True)
+    (workspace / "unchanged.txt").write_text("preserve live files\n")
+    monkeypatch.chdir(tmp_path)
+
+    if relationship == "equal":
+        source = Path("workspace/nested/..")
+        output = Path("workspace")
+    elif relationship == "source-contains-output":
+        source = Path("workspace")
+        output = Path("workspace/nested/child/..")
+    else:
+        source = Path("workspace/nested")
+        output = Path("workspace/nested/..")
+
+    before = filesystem_snapshot(tmp_path)
+    with pytest.raises(ValidationFailure, match="disjoint"):
+        if operation == "generate":
+            application.generate(
+                source=source,
+                output=output,
+                model="",
+                api_key="secret",
+                base_url=None,
+                language="",
+                max_agent_steps=0,
+            )
+        elif operation == "update":
+            application.update(
+                source=source,
+                output=output,
+                model="",
+                api_key="secret",
+                base_url=None,
+                language="",
+                max_agent_steps=0,
+            )
+        elif operation == "reconcile":
+            application.reconcile(
+                source=source,
+                output=output,
+                resolution_path=Path("missing-resolution.yaml"),
+            )
+        else:
+            application.verify(
+                source=source,
+                output=output,
+                concept_id="missing",
+                actor="invalid",
+            )
+
+    assert filesystem_snapshot(tmp_path) == before
+
+
 def test_generate_and_deterministic_noop(
     tmp_path: Path, fake_runtime: tuple[list[PDFSource], list[str]]
 ) -> None:

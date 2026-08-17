@@ -33,7 +33,7 @@ from .okf import (
     render_index,
 )
 from .publish import output_lock, publish_staging, staged_bundle
-from .security import generation_identity, reject_tracing
+from .security import generation_identity, reject_tracing, resolve_disjoint_trees
 from .sources import PageIndex, extract_sources, sha256_text, source_set_hash
 from .state import (
     baseline_path,
@@ -282,6 +282,7 @@ def generate(
     progress: Callable[[str], None] | None = None,
     timing: ProcessingTimer | None = None,
 ) -> None:
+    source, output = resolve_disjoint_trees(source, output)
     reject_tracing()
     identity = generation_identity(
         model=model,
@@ -385,6 +386,7 @@ def update(
     progress: Callable[[str], None] | None = None,
     timing: ProcessingTimer | None = None,
 ) -> bool:
+    source, output = resolve_disjoint_trees(source, output)
     reject_tracing()
     with output_lock(output.resolve()):
         return _update_locked(
@@ -723,6 +725,7 @@ def _set_conflict_value(raw: str, conflict: Conflict, value: str | None) -> str:
 
 
 def reconcile(*, source: Path, output: Path, resolution_path: Path) -> None:
+    source, output = resolve_disjoint_trees(source, output)
     reject_tracing()
     with output_lock(output.resolve()):
         _reconcile_locked(source=source, output=output, resolution_path=resolution_path)
@@ -868,6 +871,7 @@ def _reconcile_locked(*, source: Path, output: Path, resolution_path: Path) -> N
 
 
 def verify(*, source: Path, output: Path, concept_id: str, actor: str) -> None:
+    source, output = resolve_disjoint_trees(source, output)
     reject_tracing()
     with output_lock(output.resolve()):
         _verify_locked(source=source, output=output, concept_id=concept_id, actor=actor)

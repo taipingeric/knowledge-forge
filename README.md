@@ -18,6 +18,20 @@ Image-only scanned PDFs, encrypted PDFs, damaged files, documents with no extrac
 
 PDF content is untrusted data. The agent has no shell, network, or arbitrary file-writing tools. Extracted PDF text is sent to the configured model endpoint. Knowledge Forge does not write PDFs, extracted full text, or API keys into the Bundle. Model requests always use the Responses API with `store: false`. Knowledge Forge refuses to run when LangSmith or LangChain tracing is enabled, which prevents additional transmission of source content.
 
+## Source and output isolation
+
+Every source-backed operation (`generate`, `update`, `reconcile`, and `verify`) requires the resolved `--source` and `--out` directory trees to be disjoint. Knowledge Forge rejects equal paths, an output nested anywhere under the source, or a source nested anywhere under the output. Resolving both paths first means relative spellings such as `sources/../sources` cannot bypass the check.
+
+Rejection happens before source discovery, model configuration validation, model calls, staging, or report creation, so the live Bundle and private state remain absent or unchanged. Use sibling trees, for example:
+
+```text
+workspace/
+  sources/
+  knowledge/
+```
+
+Source discovery is recursive and there is currently no manifest or ignore policy. Every supported file under `--source` belongs to the authoritative Input Corpus, so keep the source root clean or physically move material that the team has not authorized as evidence.
+
 ## Installation
 
 Python 3.12 and [uv](https://docs.astral.sh/uv/) are required:

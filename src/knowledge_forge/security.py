@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from urllib.parse import urlsplit
 
 from .errors import ValidationFailure
@@ -11,6 +12,17 @@ TRACING_VARIABLES = (
     "LANGCHAIN_TRACING_V2",
     "LANGCHAIN_TRACING",
 )
+
+
+def resolve_disjoint_trees(source: Path, output: Path) -> tuple[Path, Path]:
+    source = source.resolve()
+    output = output.resolve()
+    if source == output or source in output.parents or output in source.parents:
+        raise ValidationFailure(
+            "Resolved --source and --out directory trees must be disjoint: "
+            f"source={source}, output={output}"
+        )
+    return source, output
 
 
 def reject_tracing() -> None:
