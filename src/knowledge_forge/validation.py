@@ -1,17 +1,105 @@
 from __future__ import annotations
 
 import re
+from datetime import date
 from pathlib import Path
 
 from .errors import ValidationFailure
 from .models import ForgeState, PDFSource
-from .okf import managed_fields_hash, render_index, validate_concept
+from .okf import (
+    managed_fields_hash,
+    parse_markdown,
+    render_index,
+    validate_concept,
+    validate_portable_concept,
+)
 from .sources import sha256_text, source_set_hash
 from .state import bundle_hash, load_baseline, load_state, public_concepts
 
 
 def _file_hash(path: Path) -> str:
     return sha256_text(path.read_text(encoding="utf-8"))
+
+
+def _validate_root_index(path: Path) -> list[str]:
+    if not path.is_file():
+        return []
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        return [f"index.md: cannot read UTF-8 Markdown: {exc}"]
+    if not raw.lstrip("\ufeff").startswith("---"):
+        return []
+    try:
+        metadata, _ = parse_markdown(raw)
+    except ValidationFailure as exc:
+        return [f"index.md: invalid root index frontmatter: {exc}"]
+    if set(metadata) != {"okf_version"}:
+        return ["index.md: root index frontmatter may only declare okf_version"]
+    version = metadata["okf_version"]
+    if not isinstance(version, str):
+        return ['index.md: okf_version must be the string "0.2"']
+    if version != "0.2":
+        return [f"index.md: unsupported okf_version {version!r}; expected '0.2'"]
+    return []
+
+
+def _reserved_frontmatter(raw: str) -> bool:
+    if not raw.lstrip("\ufeff").startswith("---"):
+        return False
+    try:
+        parse_markdown(raw)
+    except ValidationFailure:
+        return False
+    return True
+
+
+def _validate_reserved_file(path: Path, relative: str) -> list[str]:
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        return [f"{relative}: cannot read UTF-8 Markdown: {exc}"]
+    if _reserved_frontmatter(raw):
+        return [f"{relative}: reserved {path.name} cannot contain frontmatter"]
+    if path.name != "log.md":
+        return []
+    errors: list[str] = []
+    for line in raw.splitlines():
+        if not line.startswith("## "):
+            continue
+        heading = line.removeprefix("## ").strip()
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", heading):
+            errors.append(f"{relative}: log date heading {heading!r} must use YYYY-MM-DD")
+            continue
+        try:
+            date.fromisoformat(heading)
+        except ValueError:
+            errors.append(f"{relative}: log date heading {heading!r} is not a valid calendar date")
+    return errors
+
+
+def validate_portable_bundle(bundle: Path) -> None:
+    """Validate the portable OKF v0.2 contract without private Forge state."""
+    if not bundle.is_dir():
+        raise ValidationFailure(f"Bundle directory does not exist: {bundle}")
+    errors = _validate_root_index(bundle / "index.md")
+    for path in sorted(bundle.rglob("*.md")):
+        relative = path.relative_to(bundle).as_posix()
+        if relative.startswith(".knowledge-forge/"):
+            continue
+        if path.name in {"index.md", "log.md"}:
+            if relative != "index.md":
+                errors.extend(_validate_reserved_file(path, relative))
+            continue
+        concept_id = path.relative_to(bundle).with_suffix("").as_posix()
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError, ValidationFailure) as exc:
+            errors.append(f"{concept_id}: {exc}")
+            continue
+        errors.extend(validate_portable_concept(raw, concept_id))
+    if errors:
+        raise ValidationFailure("Portable OKF 0.2 validation failed:\n- " + "\n- ".join(errors))
 
 
 def validate_bundle(

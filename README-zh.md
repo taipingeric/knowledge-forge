@@ -162,10 +162,10 @@ PDF Sources、Bundle、state 與 Generation Identity 全部未變時，`update` 
 執行 deterministic validation，不呼叫模型或修改檔案：
 
 ```bash
-uv run knowledge-forge validate --out ./knowledge --source ./pdfs
+uv run knowledge-forge validate --out ./knowledge
 ```
 
-省略 `--source` 時，只驗證 Bundle、provenance 格式、citations、Agent Baseline 與 private state 的內部一致性；加上 `--source` 後，還會核對完整 PDF 集合、實際 SHA-256 與頁碼邊界。
+預設命令執行 Portable OKF Validation，成功時輸出 `PASS (portable OKF 0.2)`。任何符合 v0.2 的 Bundle 都可通過，不要求 `.knowledge-forge/` private state、root `index.md`、`okf_version` marker、`concepts/` namespace，或 Knowledge Forge 的受控 Concept types。每個非 reserved Markdown 檔案都必須有可解析的 YAML frontmatter，且包含非空字串 `type`；每一層目錄中的 `index.md` 與 `log.md` 都是 reserved files。若出現 v0.2 的 optional provenance、trust、freshness、lifecycle、citation 或 attestation fields，validator 會檢查其標準結構；producer extension fields 仍可使用。Validation 全程 read-only，失敗時會以 exit code 2 回報可採取行動的錯誤。
 
 為目前 Concept 版本加入人工 verification：
 

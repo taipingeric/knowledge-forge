@@ -16,15 +16,243 @@ from knowledge_forge.models import (
 from knowledge_forge.sources import logical_resource, sha256_text
 
 
-def test_validate_command_is_read_only(tmp_path: Path, monkeypatch) -> None:
+def test_validate_command_accepts_a_state_free_portable_bundle_read_only(tmp_path: Path) -> None:
+    output = tmp_path / "knowledge"
+    concept = output / "guides" / "refunds.md"
+    concept.parent.mkdir(parents=True)
+    concept.write_text("---\ntype: Guide\n---\n\n# Refunds\n")
+    before = concept.read_bytes()
+
+    result = CliRunner().invoke(cli.app, ["validate", "--out", str(output)])
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "PASS (portable OKF 0.2)"
+    assert concept.read_bytes() == before
+    assert not (output / ".knowledge-forge").exists()
+
+
+def test_validate_command_rejects_a_missing_bundle_directory(tmp_path: Path) -> None:
+    output = tmp_path / "missing"
+
+    result = CliRunner().invoke(cli.app, ["validate", "--out", str(output)])
+
+    assert result.exit_code == 2
+    assert "Bundle directory does not exist" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "\ufeff---\ntype: Guide\n---\n# Guide\n",
+        "---  \r\ntype: Guide\r\n--- \r\n# Guide\r\n",
+    ],
+)
+def test_validate_command_accepts_portable_frontmatter_delimiters(
+    tmp_path: Path, raw: str
+) -> None:
     output = tmp_path / "knowledge"
     output.mkdir()
-    called: list[Path] = []
-    monkeypatch.setattr(cli, "validate_bundle", lambda path, sources: called.append(path))
+    (output / "guide.md").write_text(raw, encoding="utf-8")
+
     result = CliRunner().invoke(cli.app, ["validate", "--out", str(output)])
+
     assert result.exit_code == 0
-    assert result.stdout.strip() == "Bundle is valid"
-    assert called == [output.resolve()]
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "# No frontmatter\n",
+        "---\ntype: [broken\n---\n",
+        "---\n- type\n- Guide\n---\n",
+        "---\ntype: '   '\n---\n",
+        "---\ntype: 42\n---\n",
+    ],
+)
+def test_validate_command_rejects_non_conformant_concepts(tmp_path: Path, raw: str) -> None:
+    output = tmp_path / "knowledge"
+    concept = output / "nested" / "broken.md"
+    concept.parent.mkdir(parents=True)
+    concept.write_text(raw)
+
+    result = CliRunner().invoke(cli.app, ["validate", "--out", str(output)])
+
+    assert result.exit_code == 2
+    assert "Error: Portable OKF 0.2 validation failed" in result.stderr
+    assert "nested/broken" in result.stderr
+
+
+def test_validate_command_accepts_reserved_files_unknown_types_and_extensions(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "knowledge"
+    (output / "section").mkdir(parents=True)
+    (output / "index.md").write_text(
+        '---\nokf_version: "0.2"\n---\n\n# Knowledge\n'
+    )
+    (output / "section" / "index.md").write_text("# Section\n")
+    (output / "section" / "log.md").write_text("# Log\n\n## 2026-08-17\n- Added.\n")
+    (output / "section" / "unusual.md").write_text(
+        "---\ntype: Acme Internal Widget\nx-acme-routing:\n  queue: blue\n---\n\n# Widget\n"
+    )
+
+    result = CliRunner().invoke(cli.app, ["validate", "--out", str(output)])
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "PASS (portable OKF 0.2)"
+
+
+@pytest.mark.parametrize(
+    ("raw_index", "expected_error"),
+    [
+        ('---\nokf_version: "0.1"\n---\n# Index\n', "unsupported okf_version"),
+        ('\ufeff---\nokf_version: "0.1"\n---\n# Index\n', "unsupported okf_version"),
+        ("---\nokf_version: 0.2\n---\n# Index\n", "must be the string"),
+        ("---\ntitle: Index\n---\n# Index\n", "only declare okf_version"),
+    ],
+)
+def test_validate_command_rejects_invalid_root_version_markers(
+    tmp_path: Path, raw_index: str, expected_error: str
+) -> None:
+    output = tmp_path / "knowledge"
+    output.mkdir()
+    (output / "index.md").write_text(raw_index)
+
+    result = CliRunner().invoke(cli.app, ["validate", "--out", str(output)])
+
+    assert result.exit_code == 2
+    assert expected_error in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("relative", "raw", "expected_error"),
+    [
+        ("nested/index.md", "---\nokf_version: '0.2'\n---\n# Index\n", "reserved index.md"),
+        ("nested/log.md", "---\ntype: Log\n---\n# Log\n", "reserved log.md"),
+        ("log.md", "# Log\n\n## August 17, 2026\n- Added.\n", "YYYY-MM-DD"),
+        ("log.md", "# Log\n\n## 2026-02-30\n- Added.\n", "valid calendar date"),
+    ],
+)
+def test_validate_command_rejects_malformed_reserved_files(
+    tmp_path: Path, relative: str, raw: str, expected_error: str
+) -> None:
+    output = tmp_path / "knowledge"
+    path = output / relative
+    path.parent.mkdir(parents=True)
+    path.write_text(raw)
+
+    result = CliRunner().invoke(cli.app, ["validate", "--out", str(output)])
+
+    assert result.exit_code == 2
+    assert expected_error in result.stderr
+
+
+def test_validate_command_accepts_well_formed_optional_v02_fields(tmp_path: Path) -> None:
+    output = tmp_path / "knowledge"
+    output.mkdir()
+    (output / "revenue.md").write_text(
+        """---
+type: Attested Computation
+title: Revenue
+description: Sanctioned revenue calculation.
+resource: urn:acme:metric:revenue
+tags: [finance, revenue]
+status: stable
+stale_after: 2026-12-31
+generated: {by: process:finance, at: '2026-08-17T12:30:00Z'}
+verified:
+  - {by: human:reviewer, at: '2026-08-17T13:00:00+00:00'}
+usage_window: {from: 2026-08-01, to: 2026-08-31}
+sources:
+  - id: revenue-policy
+    resource: https://example.com/revenue-policy
+    title: Revenue policy
+    author: team:finance
+    usage_count: 12
+    last_modified: 2026-08-16
+runtime: bigquery
+parameters:
+  - {name: year, type: integer, required: true}
+computation: references/revenue.sql
+executor:
+  resource: references/run-revenue.md
+  receipt: [job_id, executed_sql, result]
+attester:
+  resource: references/attest-revenue.py
+x-acme-owner: finance-platform
+---
+
+# Computation
+
+Revenue follows the approved policy.[^revenue-policy]
+
+[^revenue-policy]: Revenue policy
+"""
+    )
+
+    result = CliRunner().invoke(cli.app, ["validate", "--out", str(output)])
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "PASS (portable OKF 0.2)"
+
+
+@pytest.mark.parametrize(
+    ("concept_type", "frontmatter", "body", "expected_error"),
+    [
+        ("Reference", "sources: source.md\n", "", "sources must be a list"),
+        (
+            "Reference",
+            "sources:\n  - {id: policy}\n",
+            "",
+            "sources[0].resource must be a non-empty string",
+        ),
+        (
+            "Reference",
+            "usage_window: {from: 2026-08-31, to: 2026-08-01}\n",
+            "",
+            "usage_window.from must not be after usage_window.to",
+        ),
+        ("Reference", "generated: []\n", "", "generated must be a mapping"),
+        (
+            "Reference",
+            "verified: {by: human:reviewer, at: yesterday}\n",
+            "",
+            "verified[0].at must be an ISO 8601 datetime",
+        ),
+        ("Reference", "status: retired\n", "", "status must be one of"),
+        ("Reference", "stale_after: 30d\n", "", "stale_after must be a YYYY-MM-DD date"),
+        (
+            "Reference",
+            "sources:\n  - {id: policy, resource: policy.md}\n",
+            "Claim.[^missing]\n\n[^missing]: Missing\n",
+            "citation [^missing] does not match any sources[].id",
+        ),
+        ("Attested Computation", "", "", "runtime is required"),
+        (
+            "Attested Computation",
+            "runtime: python\nparameters:\n  - {name: year, type: integer, required: required}\n",
+            "",
+            "parameters[0].required must be a boolean",
+        ),
+    ],
+)
+def test_validate_command_rejects_malformed_optional_v02_fields(
+    tmp_path: Path,
+    concept_type: str,
+    frontmatter: str,
+    body: str,
+    expected_error: str,
+) -> None:
+    output = tmp_path / "knowledge"
+    output.mkdir()
+    (output / "concept.md").write_text(
+        f"---\ntype: {concept_type}\n{frontmatter}---\n\n{body}"
+    )
+
+    result = CliRunner().invoke(cli.app, ["validate", "--out", str(output)])
+
+    assert result.exit_code == 2
+    assert expected_error in result.stderr
 
 
 def test_load_local_env_reads_only_invocation_directory(

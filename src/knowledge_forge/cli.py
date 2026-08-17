@@ -14,7 +14,7 @@ from .application import verify as verify_concept
 from .errors import KnowledgeForgeError, ReconciliationRequired
 from .sources import extract_sources
 from .timing import ProcessingTimer
-from .validation import validate_bundle
+from .validation import validate_bundle, validate_portable_bundle
 
 app = typer.Typer(
     no_args_is_help=True,
@@ -193,10 +193,14 @@ def validate_command(
         typer.Option("--source", exists=True, file_okay=False, readable=True),
     ] = None,
 ) -> None:
-    """Deterministically validate the Bundle, provenance, and private state."""
+    """Deterministically validate portable OKF v0.2 conformance."""
 
     def operation() -> None:
-        sources = extract_sources(source) if source else None
+        if source is None:
+            validate_portable_bundle(out.resolve())
+            typer.echo("PASS (portable OKF 0.2)")
+            return
+        sources = extract_sources(source)
         validate_bundle(out.resolve(), sources)
         typer.echo("Bundle is valid")
 

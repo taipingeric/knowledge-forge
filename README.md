@@ -162,10 +162,10 @@ A valid document that a person adds under `concepts/` is registered as a permane
 Run deterministic validation without calling a model or changing files:
 
 ```bash
-uv run knowledge-forge validate --out ./knowledge --source ./pdfs
+uv run knowledge-forge validate --out ./knowledge
 ```
 
-Without `--source`, validation checks the Bundle's internal provenance format, citations, Agent Baselines, and private state. With `--source`, it also checks the complete PDF set, actual SHA-256 values, and page boundaries.
+The default command performs Portable OKF Validation and prints `PASS (portable OKF 0.2)` on success. It accepts any conformant v0.2 Bundle without requiring `.knowledge-forge/` private state, a root `index.md`, an `okf_version` marker, a `concepts/` namespace, or Knowledge Forge's controlled Concept types. Every non-reserved Markdown file must have parseable YAML frontmatter with a non-empty string `type`; `index.md` and `log.md` are reserved at every directory level. When optional v0.2 provenance, trust, freshness, lifecycle, citation, or attestation fields are present, their standard structure is validated. Producer extension fields remain allowed. Validation is read-only, and a failure reports actionable errors with exit code 2.
 
 Add human verification to the current Concept version:
 
