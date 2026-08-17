@@ -1,0 +1,3 @@
+# Preserve Imported Concept languages
+
+Knowledge Forge preserves each Imported Concept in its original language and permits a Team Knowledge Wiki to contain multiple languages; the requested output language controls only agent-generated Concepts. Knowledge Forge must not automatically translate an Imported Concept because doing so would re-synthesize its content, invalidate structural hashes, and misattribute translated claims to upstream provenance. A future multilingual presentation feature may create a separate translated Concept with its own identity and an explicit Provenance Chain to the original, but cannot mutate or masquerade as the import.

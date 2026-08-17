@@ -1,0 +1,3 @@
+# Separate portable and managed validation
+
+Knowledge Forge will separate Portable OKF Validation from Managed Bundle Validation. `knowledge-forge validate --out PATH` performs portable validation and reports `PASS (portable OKF 0.2)`; `--managed` additionally enforces the state, provenance, hashes, manifests, and filesystem consistency required for safe incremental generation, repair, and other managed workflows. When portable validation detects `.knowledge-forge/`, it advises the user to run with `--managed` for full validation without changing the portable result. This preserves interoperability without weakening Knowledge Forge's stronger operational guarantees.

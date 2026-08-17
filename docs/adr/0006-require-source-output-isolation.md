@@ -1,0 +1,3 @@
+# Require source and output isolation
+
+Knowledge Forge requires the resolved source and output trees to be disjoint and rejects configurations where either path equals, contains, or is contained by the other before source discovery. This prevents generated Markdown from becoming authoritative input on later runs; future exclusions or ignore files may improve convenience but cannot replace this isolation invariant. Until such selection controls exist, every supported file under the source root belongs to the Input Corpus, at the cost of requiring users to maintain a clean source tree or physically move material they do not authorize as evidence.
