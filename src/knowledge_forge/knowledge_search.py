@@ -9,24 +9,26 @@ from .errors import ValidationFailure
 from .okf import parse_markdown
 from .state import public_concepts
 
-_SNIPPET_RADIUS = 80
+DEFAULT_SNIPPET_RADIUS = 80
 
 
-def _snippet(body: str, keywords: list[str]) -> str:
+def _snippet(body: str, keywords: list[str], radius: int) -> str:
     lowered = body.casefold()
     for keyword in keywords:
         index = lowered.find(keyword.casefold())
         if index == -1:
             continue
-        start = max(0, index - _SNIPPET_RADIUS)
-        end = min(len(body), index + len(keyword) + _SNIPPET_RADIUS)
+        start = max(0, index - radius)
+        end = min(len(body), index + len(keyword) + radius)
         prefix = "…" if start > 0 else ""
         suffix = "…" if end < len(body) else ""
         return prefix + " ".join(body[start:end].split()) + suffix
-    return " ".join(body.split())[: _SNIPPET_RADIUS * 2]
+    return " ".join(body.split())[: radius * 2]
 
 
-def search_concepts(bundle: Path, keywords: list[str]) -> list[dict[str, object]]:
+def search_concepts(
+    bundle: Path, keywords: list[str], *, snippet_radius: int = DEFAULT_SNIPPET_RADIUS
+) -> list[dict[str, object]]:
     """Find existing Concept documents whose id, title, or body contain any keyword."""
     keywords = [keyword.strip() for keyword in keywords if keyword.strip()]
     if not keywords:
@@ -41,7 +43,11 @@ def search_concepts(bundle: Path, keywords: list[str]) -> list[dict[str, object]
         haystack = f"{concept_id}\n{title}\n{body}".casefold()
         if any(keyword.casefold() in haystack for keyword in keywords):
             matches.append(
-                {"concept_id": concept_id, "title": title, "snippet": _snippet(body, keywords)}
+                {
+                    "concept_id": concept_id,
+                    "title": title,
+                    "snippet": _snippet(body, keywords, snippet_radius),
+                }
             )
     return matches
 

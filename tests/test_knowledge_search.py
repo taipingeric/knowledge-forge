@@ -48,3 +48,15 @@ def test_search_ignores_blank_keywords_without_matching_everything(tmp_path: Pat
     _write_concept(tmp_path, "mvcc", "MVCC", "Multi-version concurrency control uses snapshots.")
 
     assert search_concepts(tmp_path, ["  ", ""]) == []
+
+
+def test_search_snippet_radius_is_configurable(tmp_path: Path) -> None:
+    body = "Before context words here. Snapshots avoid blocking readers. After context words here."
+    _write_concept(tmp_path, "mvcc", "MVCC", body)
+
+    narrow = search_concepts(tmp_path, ["snapshots"], snippet_radius=5)
+    wide = search_concepts(tmp_path, ["snapshots"], snippet_radius=80)
+
+    assert len(narrow[0]["snippet"]) < len(wide[0]["snippet"])
+    assert "Before context" not in narrow[0]["snippet"]
+    assert "Before context" in wide[0]["snippet"]
