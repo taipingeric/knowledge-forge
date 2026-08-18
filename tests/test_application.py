@@ -352,6 +352,80 @@ def test_agent_backed_update_reports_reasoning_and_each_synthesis_phase(
     ]
 
 
+def test_update_wires_the_live_bundle_path_into_the_reasoning_agent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source_dir = tmp_path / "pdfs"
+    source_dir.mkdir()
+    output = tmp_path / "knowledge"
+    sources = [pdf()]
+    run_agent = application._run_agent
+    monkeypatch.setattr(application, "extract_sources", lambda _: sources)
+    monkeypatch.setattr(
+        application,
+        "_run_agent",
+        lambda **_: ({"concepts/refund-policy": concept(sources[0], "Seven days")}, "English"),
+    )
+    application.generate(
+        source=source_dir,
+        output=output,
+        model="fake-model",
+        api_key="secret",
+        base_url="https://models.example/v1",
+        language="auto",
+        max_agent_steps=50,
+    )
+
+    captured: dict[str, object] = {}
+
+    class CapturingAgent:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+        def plan(self, language: str, existing_ids: list[str]) -> ConceptPlan:
+            return ConceptPlan(
+                language="English",
+                concepts=[
+                    PlannedConcept(
+                        slug="refund-policy",
+                        title="Refund policy",
+                        type="Policy",
+                        description="Rules for refunds.",
+                        search_queries=["refund"],
+                    )
+                ],
+            )
+
+        def synthesize(self, planned: PlannedConcept, language: str) -> ConceptDraft:
+            return ConceptDraft(
+                slug=planned.slug,
+                title=planned.title,
+                type=planned.type,
+                description=planned.description,
+                body=(
+                    "# Rule\n\nFive days.[^policy.pdf@p1]\n\n"
+                    "[^policy.pdf@p1]: Refund policy, page 1"
+                ),
+                evidence=[Evidence(source_id="policy.pdf", pages=[1])],
+            )
+
+    sources[0] = pdf("two")
+    monkeypatch.setattr(application, "_run_agent", run_agent)
+    monkeypatch.setattr(application, "ReasoningAgent", CapturingAgent)
+
+    assert application.update(
+        source=source_dir,
+        output=output,
+        model="fake-model",
+        api_key="secret",
+        base_url="https://models.example/v1",
+        language="auto",
+        max_agent_steps=50,
+    )
+
+    assert captured["bundle"] == output.resolve()
+
+
 def test_generate_records_and_reports_non_parallel_compatibility_mode(
     tmp_path: Path, fake_runtime: tuple[list[PDFSource], list[str]]
 ) -> None:

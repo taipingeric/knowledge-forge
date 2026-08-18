@@ -272,6 +272,55 @@ def test_reasoning_agent_forces_responses_api_without_storage(
     assert captured["model_kwargs"] == {"parallel_tool_calls": True}
 
 
+def test_search_knowledge_tool_finds_existing_concepts_in_the_bundle(tmp_path: Path) -> None:
+    bundle = tmp_path / "knowledge"
+    concept_path = bundle / "concepts" / "mvcc.md"
+    concept_path.parent.mkdir(parents=True)
+    concept_path.write_text(
+        "---\ntype: Concept\ntitle: MVCC\ndescription: d\n---\n\n"
+        "Snapshots avoid blocking readers.\n",
+        encoding="utf-8",
+    )
+    with PageIndex(tmp_path / "pages.sqlite") as index:
+        index.add([pdf()])
+        agent = ReasoningAgent(
+            index=index,
+            sources=[pdf()],
+            model="fake",
+            api_key="secret",
+            base_url=None,
+            max_steps=5,
+            bundle=bundle,
+        )
+        search_knowledge = next(t for t in agent._tools if t.name == "search_knowledge")
+        result = json.loads(search_knowledge.func(keywords=["snapshots"]))
+
+    assert result == [
+        {
+            "concept_id": "concepts/mvcc",
+            "title": "MVCC",
+            "snippet": "Snapshots avoid blocking readers.",
+        }
+    ]
+
+
+def test_search_knowledge_tool_returns_nothing_without_a_bundle(tmp_path: Path) -> None:
+    with PageIndex(tmp_path / "pages.sqlite") as index:
+        index.add([pdf()])
+        agent = ReasoningAgent(
+            index=index,
+            sources=[pdf()],
+            model="fake",
+            api_key="secret",
+            base_url=None,
+            max_steps=5,
+        )
+        search_knowledge = next(t for t in agent._tools if t.name == "search_knowledge")
+        result = json.loads(search_knowledge.func(keywords=["snapshots"]))
+
+    assert result == []
+
+
 def _responses_payload(output: list[dict[str, object]], response_id: str) -> dict[str, object]:
     return {
         "id": response_id,

@@ -221,6 +221,7 @@ def _run_agent(
     generation: GenerationIdentity,
     api_key: str,
     existing_ids: list[str],
+    output: Path,
     progress: Callable[[str], None] | None = None,
     timing: ProcessingTimer | None = None,
 ) -> tuple[dict[str, str], str]:
@@ -248,6 +249,7 @@ def _run_agent(
                 base_url=generation.endpoint,
                 max_steps=generation.max_agent_steps,
                 parallel_tool_calls=generation.parallel_tool_calls,
+                bundle=output,
             )
 
         with index:
@@ -326,6 +328,7 @@ def _generate_locked(
         generation=generation,
         api_key=api_key,
         existing_ids=[],
+        output=output,
         progress=progress,
         timing=timing,
     )
@@ -467,6 +470,7 @@ def _update_locked(
             generation=identity,
             api_key=api_key,
             existing_ids=sorted(current),
+            output=output,
             progress=progress,
             timing=timing,
         )
