@@ -241,6 +241,27 @@ sources:
 
 重大、爭議、數字、政策或版本敏感陳述使用 page-level footnote，例如 `[^policies/refunds.pdf@p3]`，並在正文加入同 label 的 footnote definition。
 
+## 對 Concept 做關鍵字搜尋
+
+若要在自己的程式中檢查 Bundle 的 `knowledge/concepts/*.md`，比對 id、title、body 是否符合關鍵字：
+
+```python
+from knowledge_forge.knowledge_search import search_concepts
+
+matches = search_concepts(bundle_path, ["deadlock", "mvcc"])
+```
+
+若要把同樣的搜尋功能包成 LangChain tool，接進自己的 agent（例如讓 LLM 在起草新 Concept 前，先檢查是否已存在相關 Concept）：
+
+```python
+from knowledge_forge.tools import build_search_knowledge_tool
+
+search_knowledge = build_search_knowledge_tool(bundle_path)
+agent = create_agent(model=model, tools=[search_knowledge, ...])
+```
+
+這個 tool 只接受純關鍵字清單 `keywords: list[str]`（不接受自由文字 query），回傳符合的 concept ID 與簡短片段（JSON 格式）。
+
 ## TODO
 
 - [x] 讓 `generate` 與 `update` 可切換 parallel tool calls。預設模式保留並 replay 所有平行 calls；`--no-parallel-tool-calls` 為受影響的 gateways 選用 deterministic single-call compatibility。Provider failure 絕不觸發自動 fallback。

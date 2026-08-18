@@ -241,6 +241,27 @@ sources:
 
 Material, disputed, numeric, policy, or version-sensitive statements use page-level footnotes such as `[^policies/refunds.pdf@p3]`, with a matching footnote definition in the body.
 
+## Keyword search over Concepts
+
+To check a Bundle's `knowledge/concepts/*.md` for id/title/body keyword matches from your own code:
+
+```python
+from knowledge_forge.knowledge_search import search_concepts
+
+matches = search_concepts(bundle_path, ["deadlock", "mvcc"])
+```
+
+To expose the same search as a LangChain tool inside your own agent (e.g. so an LLM can check for existing Concepts before drafting new ones):
+
+```python
+from knowledge_forge.tools import build_search_knowledge_tool
+
+search_knowledge = build_search_knowledge_tool(bundle_path)
+agent = create_agent(model=model, tools=[search_knowledge, ...])
+```
+
+The tool takes a plain `keywords: list[str]` (no free-text query) and returns matching concept IDs with a short snippet as JSON.
+
 ## TODO
 
 - [x] Make parallel tool calls configurable for `generate` and `update`. The default preserves and replays all parallel calls; `--no-parallel-tool-calls` selects deterministic single-call compatibility for affected gateways. Provider failures never trigger an automatic fallback.
