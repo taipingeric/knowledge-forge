@@ -12,6 +12,7 @@ from .application import reconcile as reconcile_bundle
 from .application import update as update_bundle
 from .application import verify as verify_concept
 from .errors import KnowledgeForgeError, ReconciliationRequired
+from .security import resolve_disjoint_trees
 from .sources import extract_sources
 from .timing import ProcessingTimer
 from .validation import validate_bundle, validate_portable_bundle
@@ -193,15 +194,16 @@ def validate_command(
         typer.Option("--source", exists=True, file_okay=False, readable=True),
     ] = None,
 ) -> None:
-    """Deterministically validate portable OKF v0.2 conformance."""
+    """Deterministically validate portable OKF v0.2 conformance by default."""
 
     def operation() -> None:
         if source is None:
             validate_portable_bundle(out.resolve())
             typer.echo("PASS (portable OKF 0.2)")
             return
-        sources = extract_sources(source)
-        validate_bundle(out.resolve(), sources)
+        resolved_source, resolved_output = resolve_disjoint_trees(source, out)
+        sources = extract_sources(resolved_source)
+        validate_bundle(resolved_output, sources)
         typer.echo("Bundle is valid")
 
     _run(operation)

@@ -128,6 +128,7 @@ def test_validate_command_rejects_invalid_root_version_markers(
     ("relative", "raw", "expected_error"),
     [
         ("nested/index.md", "---\nokf_version: '0.2'\n---\n# Index\n", "reserved index.md"),
+        ("nested/index.md", "---\ntype: [broken\n---\n# Index\n", "reserved index.md"),
         ("nested/log.md", "---\ntype: Log\n---\n# Log\n", "reserved log.md"),
         ("log.md", "# Log\n\n## August 17, 2026\n- Added.\n", "YYYY-MM-DD"),
         ("log.md", "# Log\n\n## 2026-02-30\n- Added.\n", "valid calendar date"),

@@ -20,7 +20,7 @@ PDF content is untrusted data. The agent has no shell, network, or arbitrary fil
 
 ## Source and output isolation
 
-Every source-backed operation (`generate`, `update`, `reconcile`, and `verify`) requires the resolved `--source` and `--out` directory trees to be disjoint. Knowledge Forge rejects equal paths, an output nested anywhere under the source, or a source nested anywhere under the output. Resolving both paths first means relative spellings such as `sources/../sources` cannot bypass the check.
+Every source-backed operation (`generate`, `update`, `reconcile`, `verify`, and `validate` when `--source` is supplied) requires the resolved `--source` and `--out` directory trees to be disjoint. Knowledge Forge rejects equal paths, an output nested anywhere under the source, or a source nested anywhere under the output. Resolving both paths first means relative spellings such as `sources/../sources` cannot bypass the check.
 
 Rejection happens before source discovery, model configuration validation, model calls, staging, or report creation, so the live Bundle and private state remain absent or unchanged. Use sibling trees, for example:
 

@@ -20,7 +20,7 @@ PDF 內容被視為不可信資料，agent 沒有 shell、network 或任意檔�
 
 ## 來源與輸出隔離
 
-所有需要來源的操作（`generate`、`update`、`reconcile` 與 `verify`）都要求解析後的 `--source` 與 `--out` 目錄樹彼此完全分離。兩個路徑相同、輸出位於來源之下，或來源位於輸出之下時，Knowledge Forge 都會拒絕執行。系統會先解析兩個路徑，因此 `sources/../sources` 之類的相對路徑寫法無法繞過檢查。
+所有需要來源的操作（`generate`、`update`、`reconcile`、`verify`，以及提供 `--source` 時的 `validate`）都要求解析後的 `--source` 與 `--out` 目錄樹彼此完全分離。兩個路徑相同、輸出位於來源之下，或來源位於輸出之下時，Knowledge Forge 都會拒絕執行。系統會先解析兩個路徑，因此 `sources/../sources` 之類的相對路徑寫法無法繞過檢查。
 
 拒絕會發生在來源探索、模型設定驗證、模型呼叫、staging 或報告建立之前，因此 live Bundle 與 private state 會維持不存在或完全不變。請使用平行的目錄樹，例如：
 

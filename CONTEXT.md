@@ -25,7 +25,7 @@ An ordinary Markdown document approved as Knowledge Source evidence that does no
 _Avoid_: Markdown input, OKF Concept, existing wiki page
 
 **OKF Bundle**:
-A versioned directory tree of Markdown concept documents conforming to Google Open Knowledge Format 0.2, with a root `index.md` that declares `okf_version: "0.2"`.
+A directory tree of Markdown Concept Documents conforming to Google Open Knowledge Format 0.2. A root `index.md` and `okf_version` marker are optional for portable conformance.
 _Avoid_: Wiki export, document dump
 
 **Concept Document**:

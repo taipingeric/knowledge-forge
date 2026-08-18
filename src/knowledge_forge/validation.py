@@ -21,13 +21,19 @@ def _file_hash(path: Path) -> str:
     return sha256_text(path.read_text(encoding="utf-8"))
 
 
+def _read_portable_markdown(path: Path, relative: str) -> tuple[str | None, list[str]]:
+    try:
+        return path.read_text(encoding="utf-8"), []
+    except (OSError, UnicodeError) as exc:
+        return None, [f"{relative}: cannot read UTF-8 Markdown: {exc}"]
+
+
 def _validate_root_index(path: Path) -> list[str]:
     if not path.is_file():
         return []
-    try:
-        raw = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeError) as exc:
-        return [f"index.md: cannot read UTF-8 Markdown: {exc}"]
+    raw, errors = _read_portable_markdown(path, "index.md")
+    if raw is None:
+        return errors
     if not raw.lstrip("\ufeff").startswith("---"):
         return []
     try:
@@ -44,22 +50,18 @@ def _validate_root_index(path: Path) -> list[str]:
     return []
 
 
-def _reserved_frontmatter(raw: str) -> bool:
-    if not raw.lstrip("\ufeff").startswith("---"):
+def _has_frontmatter_block(raw: str) -> bool:
+    lines = raw.removeprefix("\ufeff").splitlines()
+    if not lines or lines[0].strip() != "---":
         return False
-    try:
-        parse_markdown(raw)
-    except ValidationFailure:
-        return False
-    return True
+    return any(line.strip() == "---" for line in lines[1:])
 
 
 def _validate_reserved_file(path: Path, relative: str) -> list[str]:
-    try:
-        raw = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeError) as exc:
-        return [f"{relative}: cannot read UTF-8 Markdown: {exc}"]
-    if _reserved_frontmatter(raw):
+    raw, errors = _read_portable_markdown(path, relative)
+    if raw is None:
+        return errors
+    if _has_frontmatter_block(raw):
         return [f"{relative}: reserved {path.name} cannot contain frontmatter"]
     if path.name != "log.md":
         return []
@@ -92,10 +94,9 @@ def validate_portable_bundle(bundle: Path) -> None:
                 errors.extend(_validate_reserved_file(path, relative))
             continue
         concept_id = path.relative_to(bundle).with_suffix("").as_posix()
-        try:
-            raw = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeError, ValidationFailure) as exc:
-            errors.append(f"{concept_id}: {exc}")
+        raw, read_errors = _read_portable_markdown(path, concept_id)
+        if raw is None:
+            errors.extend(read_errors)
             continue
         errors.extend(validate_portable_concept(raw, concept_id))
     if errors:
