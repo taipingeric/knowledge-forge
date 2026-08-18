@@ -18,7 +18,7 @@ from openai import APIError
 from pydantic import BaseModel
 
 from .errors import SearchQueryFailure, ValidationFailure
-from .knowledge_search import search_concepts
+from .knowledge_search import build_search_knowledge_tool
 from .models import ConceptDraft, ConceptPlan, PDFSource, PlannedConcept
 from .okf import render_concept, validate_concept
 from .sources import PageIndex
@@ -112,7 +112,6 @@ class ReasoningAgent:
     ) -> None:
         self._index = index
         self._sources = {source.id: source for source in sources}
-        self._bundle = bundle
         self._max_steps = max_steps
         self._steps = 0
         self._model = ChatOpenAI(
@@ -139,14 +138,7 @@ class ReasoningAgent:
                 return json.dumps({"error": "unknown source_id"})
             return json.dumps(self._index.read(source_id, pages), ensure_ascii=False)
 
-        @tool
-        def search_knowledge(keywords: list[str]) -> str:
-            """Search existing Concept documents in the knowledge Bundle by a keyword list."""
-            if self._bundle is None:
-                return json.dumps([])
-            return json.dumps(search_concepts(self._bundle, keywords), ensure_ascii=False)
-
-        self._tools = [search_pages, read_pages, search_knowledge]
+        self._tools = [search_pages, read_pages, build_search_knowledge_tool(bundle)]
 
     @property
     def steps(self) -> int:
