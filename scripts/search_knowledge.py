@@ -11,7 +11,7 @@ import argparse
 import json
 from pathlib import Path
 
-from knowledge_forge.knowledge_search import build_search_knowledge_tool
+from knowledge_forge.tools import build_search_knowledge_tool
 
 
 def parse_args() -> argparse.Namespace:

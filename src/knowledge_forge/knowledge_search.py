@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
-
-from langchain.tools import BaseTool, tool
 
 from .errors import ValidationFailure
 from .okf import parse_markdown
@@ -50,16 +47,3 @@ def search_concepts(
                 }
             )
     return matches
-
-
-def build_search_knowledge_tool(bundle: Path | None) -> BaseTool:
-    """Bind a knowledge Bundle path into a LangChain tool for keyword search."""
-
-    @tool
-    def search_knowledge(keywords: list[str]) -> str:
-        """Search existing Concept documents in the knowledge Bundle by a keyword list."""
-        if bundle is None:
-            return json.dumps([])
-        return json.dumps(search_concepts(bundle, keywords), ensure_ascii=False)
-
-    return search_knowledge

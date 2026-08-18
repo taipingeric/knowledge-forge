@@ -11,17 +11,16 @@ from langchain.agents.middleware import AgentState, ToolErrorMiddleware, after_m
 from langchain.agents.middleware.types import ToolCallRequest
 from langchain.agents.structured_output import ToolStrategy
 from langchain.messages import AIMessage
-from langchain.tools import tool
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_openai import ChatOpenAI
 from openai import APIError
 from pydantic import BaseModel
 
 from .errors import SearchQueryFailure, ValidationFailure
-from .knowledge_search import build_search_knowledge_tool
 from .models import ConceptDraft, ConceptPlan, PDFSource, PlannedConcept
 from .okf import render_concept, validate_concept
 from .sources import PageIndex
+from .tools import build_read_pages_tool, build_search_knowledge_tool, build_search_pages_tool
 
 ResultT = TypeVar("ResultT", bound=BaseModel)
 
@@ -126,19 +125,11 @@ class ReasoningAgent:
         )
         self._parallel_tool_calls = parallel_tool_calls
 
-        @tool
-        def search_pages(query: str, limit: int = 10) -> str:
-            """Search all untrusted PDF pages and return source IDs, pages, and snippets."""
-            return json.dumps(self._index.search(query, limit), ensure_ascii=False)
-
-        @tool
-        def read_pages(source_id: str, pages: list[int]) -> str:
-            """Read exact 1-based pages from one untrusted PDF source."""
-            if source_id not in self._sources:
-                return json.dumps({"error": "unknown source_id"})
-            return json.dumps(self._index.read(source_id, pages), ensure_ascii=False)
-
-        self._tools = [search_pages, read_pages, build_search_knowledge_tool(bundle)]
+        self._tools = [
+            build_search_pages_tool(self._index),
+            build_read_pages_tool(self._index, self._sources),
+            build_search_knowledge_tool(bundle),
+        ]
 
     @property
     def steps(self) -> int:
