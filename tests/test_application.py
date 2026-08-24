@@ -502,6 +502,89 @@ def test_update_tool_call_mode_change_bypasses_fast_path_and_updates_identity(
     assert "Curated by a human" in concept_path.read_text()
 
 
+def test_regenerate_all_runs_full_update_and_resolves_staleness_audit(
+    tmp_path: Path, fake_runtime: tuple[list[PDFSource], list[str]]
+) -> None:
+    sources, generated = fake_runtime
+    source_dir, output = generate_bundle(tmp_path)
+    sources[0] = pdf("two")
+    generated[0] = concept(sources[0], "Five days")
+
+    with pytest.raises(StalenessDetected):
+        application.update(
+            source=source_dir,
+            output=output,
+            model="fake-model",
+            api_key="secret",
+            base_url="https://models.example/v1",
+            language="auto",
+            max_agent_steps=50,
+        )
+
+    assert application.update(
+        source=source_dir,
+        output=output,
+        model="fake-model",
+        api_key="secret",
+        base_url="https://models.example/v1",
+        language="auto",
+        max_agent_steps=50,
+        regenerate_all=True,
+    )
+
+    assert "Five days" in (output / "concepts/refund-policy.md").read_text()
+    assert load_state(output).sources["policy.pdf"].content_sha256 == sha256_text("two")
+    assert not (tmp_path / "knowledge.staleness").exists()
+    report = (tmp_path / "knowledge.staleness.md").read_text()
+    assert "Status: resolved" in report
+    assert "Authorized source set" in report
+    assert "Requested Generation Identity" in report
+    assert "Recorded impact" in report
+    assert "refund-policy" in report
+    assert "Five days" not in report
+
+
+def test_regenerate_all_rejects_a_report_for_changed_sources_before_reasoning(
+    tmp_path: Path,
+    fake_runtime: tuple[list[PDFSource], list[str]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sources, _ = fake_runtime
+    source_dir, output = generate_bundle(tmp_path)
+    sources[0] = pdf("two")
+
+    with pytest.raises(StalenessDetected):
+        application.update(
+            source=source_dir,
+            output=output,
+            model="fake-model",
+            api_key="secret",
+            base_url="https://models.example/v1",
+            language="auto",
+            max_agent_steps=50,
+        )
+
+    sources[0] = pdf("three")
+    before = filesystem_snapshot(output)
+    monkeypatch.setattr(application, "_run_agent", lambda **_: pytest.fail("must not reason"))
+
+    with pytest.raises(ValidationFailure, match="source set"):
+        application.update(
+            source=source_dir,
+            output=output,
+            model="fake-model",
+            api_key="secret",
+            base_url="https://models.example/v1",
+            language="auto",
+            max_agent_steps=50,
+            regenerate_all=True,
+        )
+
+    assert filesystem_snapshot(output) == before
+    assert (tmp_path / "knowledge.staleness" / "manifest.json").is_file()
+    assert "Status: pending" in (tmp_path / "knowledge.staleness.md").read_text()
+
+
 def test_isolated_reasoning_sessions_share_the_page_index_and_publish_nothing_on_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -530,23 +530,30 @@ def test_generate_accepts_non_parallel_tool_call_compatibility_mode(
 
 
 @pytest.mark.parametrize(
-    ("extra_args", "expected_parallel"),
-    [([], True), (["--no-parallel-tool-calls"], False)],
+    ("extra_args", "expected_parallel", "expected_regeneration"),
+    [
+        ([], True, False),
+        (["--no-parallel-tool-calls"], False, False),
+        (["--regenerate-all"], True, True),
+    ],
 )
 def test_update_selects_tool_call_mode(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     extra_args: list[str],
     expected_parallel: bool,
+    expected_regeneration: bool,
 ) -> None:
     source = tmp_path / "pdfs"
     source.mkdir()
     output = tmp_path / "knowledge"
     observed: list[bool] = []
+    regeneration_requests: list[bool] = []
 
     def fake_update(**kwargs: object) -> bool:
         parallel = bool(kwargs["parallel_tool_calls"])
         observed.append(parallel)
+        regeneration_requests.append(bool(kwargs["regenerate_all"]))
         progress = kwargs["progress"]
         assert callable(progress)
         progress(
@@ -586,6 +593,7 @@ def test_update_selects_tool_call_mode(
         "[knowledge-forge] Total processing time: 1.000s.",
     ]
     assert observed == [expected_parallel]
+    assert regeneration_requests == [expected_regeneration]
 
 
 @pytest.mark.parametrize(
@@ -593,6 +601,7 @@ def test_update_selects_tool_call_mode(
     [
         (None, 0, None),
         (cli.ReconciliationRequired("report.md"), 3, "report.md"),
+        (cli.StalenessDetected("report.md"), 4, "report.md"),
         (cli.KnowledgeForgeError("update failed"), 2, "Error: update failed"),
     ],
 )

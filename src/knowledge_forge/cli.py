@@ -141,6 +141,15 @@ def update(
     language: LanguageOption = "auto",
     max_agent_steps: StepOption = 50,
     no_parallel_tool_calls: NoParallelToolCallsOption = False,
+    regenerate_all: Annotated[
+        bool,
+        typer.Option(
+            "--regenerate-all",
+            help=(
+                "Authorize full replanning and synthesis from a pending Regeneration Impact Report."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Reconcile a Bundle against its complete authoritative PDF source set."""
     timing = ProcessingTimer(_show_progress, monotonic)
@@ -155,6 +164,7 @@ def update(
             language=language,
             max_agent_steps=max_agent_steps,
             parallel_tool_calls=not no_parallel_tool_calls,
+            regenerate_all=regenerate_all,
             progress=_show_progress,
             timing=timing,
         )
