@@ -17,6 +17,7 @@ class SourceKind(StrEnum):
     """Identify the kind of material used as Knowledge Forge evidence."""
 
     PDF = "pdf"
+    MARKDOWN = "markdown"
 
 
 class PDFPageLocator(BaseModel):
@@ -26,7 +27,16 @@ class PDFPageLocator(BaseModel):
     page: int = Field(ge=1)
 
 
-EvidenceLocator = PDFPageLocator
+class MarkdownBlockLocator(BaseModel):
+    """Locate Markdown evidence by a durable heading address and block hash."""
+
+    kind: Literal["markdown_block"] = "markdown_block"
+    heading_path: list[str]
+    occurrence: int = Field(ge=1)
+    content_sha256: str
+
+
+EvidenceLocator = PDFPageLocator | MarkdownBlockLocator
 
 
 class EvidenceUnit(BaseModel):
@@ -34,6 +44,8 @@ class EvidenceUnit(BaseModel):
 
     locator: EvidenceLocator
     text: str
+    line_start: int | None = Field(default=None, ge=1)
+    line_end: int | None = Field(default=None, ge=1)
 
 
 class KnowledgeSource(BaseModel):
@@ -79,11 +91,18 @@ class PDFSource(KnowledgeSource):
         return self
 
 
+class MarkdownSource(KnowledgeSource):
+    """Represent an ordinary Markdown Knowledge Source and structural evidence blocks."""
+
+    kind: Literal[SourceKind.MARKDOWN] = SourceKind.MARKDOWN
+
+
 class Evidence(BaseModel):
     """Reference the pages from one Knowledge Source used by a Concept."""
 
     source_id: str
-    pages: list[int] = Field(min_length=1)
+    pages: list[int] = Field(default_factory=list)
+    locators: list[EvidenceLocator] = Field(default_factory=list)
 
     @field_validator("pages")
     @classmethod
@@ -93,6 +112,12 @@ class Evidence(BaseModel):
         if any(page < 1 for page in value):
             raise ValueError("page numbers are 1-based")
         return sorted(set(value))
+
+    @model_validator(mode="after")
+    def require_locator(self) -> Evidence:
+        if not self.pages and not self.locators:
+            raise ValueError("evidence must include pages or typed locators")
+        return self
 
 
 class PlannedConcept(BaseModel):
