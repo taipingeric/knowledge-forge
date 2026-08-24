@@ -235,7 +235,9 @@ knowledge/
     baseline/<concept-id>.json
 ```
 
-`.knowledge-forge/state.json` stores the workflow and Generation Identity, source dependencies, ownership, overrides, and verification audit. A deterministic checksum detects unexpected changes. `baseline/` wraps complete agent-authored Markdown in JSON so OKF consumers do not treat it as a public Concept Document. Both locations are tool-managed state and must not be edited manually.
+`.knowledge-forge/state.json` stores source dependencies, ownership, overrides, verification audit, and three deliberately separate versions. `state_version` is the private **State Schema Version** and controls deterministic state migrations. Top-level `workflow_version` describes orchestration behavior, so changing it alone does not require Concept regeneration. `generation.generation_policy_version`, together with the model, endpoint, language, step budget, tool-call mode, and Concept concurrency, is the **Generation Identity**: changing any of those candidate-producing values requires regeneration.
+
+The current schema is v2. A checksum-verified v1 PDF state is loaded only through an explicit compatibility migration; unsupported or unknown schema versions fail with a clear error rather than being reinterpreted. Compatibility loading is read-only; a mutation that publishes managed state writes the current schema atomically. State serialization and its checksum are deterministic. `baseline/` wraps complete agent-authored Markdown in JSON so OKF consumers do not treat it as a public Concept Document. Both locations are tool-managed state and must not be edited manually.
 
 Each Concept-local Source Reference uses a durable logical URN and records separate document and
 typed-locator hashes. Its `id` is deterministically derived from the Source Identity and page address:

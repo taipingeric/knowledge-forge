@@ -19,7 +19,7 @@ from knowledge_forge.models import (
 )
 from knowledge_forge.okf import dump_markdown, parse_markdown, render_concept
 from knowledge_forge.sources import logical_resource, sha256_text
-from knowledge_forge.state import bundle_hash, load_state
+from knowledge_forge.state import bundle_hash, load_state, write_state
 from knowledge_forge.timing import ProcessingTimer
 from knowledge_forge.validation import validate_bundle
 
@@ -177,7 +177,8 @@ def test_generate_and_deterministic_noop(
     generation = load_state(output).generation
     assert generation.parallel_tool_calls is True
     assert generation.concept_concurrency == 4
-    assert generation.workflow_version == "3"
+    assert generation.generation_policy_version == "1"
+    assert load_state(output).workflow_version == "3"
     before = bundle_hash(output, include_state=True)
     assert (
         application.update(
@@ -193,6 +194,25 @@ def test_generate_and_deterministic_noop(
     )
     assert bundle_hash(output, include_state=True) == before
     validate_bundle(output)
+
+
+def test_workflow_version_change_does_not_regenerate_concepts(
+    tmp_path: Path, fake_runtime: tuple[list[PDFSource], list[str]]
+) -> None:
+    source_dir, output = generate_bundle(tmp_path)
+    state = load_state(output)
+    state.workflow_version = "previous-workflow"
+    write_state(output, state)
+
+    assert not application.update(
+        source=source_dir,
+        output=output,
+        model="fake-model",
+        api_key="secret",
+        base_url="https://models.example/v1",
+        language="auto",
+        max_agent_steps=50,
+    )
 
 
 def test_update_noop_reports_only_completed_deterministic_phases(
