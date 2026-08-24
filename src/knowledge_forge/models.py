@@ -178,7 +178,7 @@ class VerificationEvent(BaseModel):
 class ConceptState(BaseModel):
     """Store private ownership, deletion, provenance, and dependency state for a Concept."""
 
-    ownership: Literal["agent", "human"]
+    ownership: Literal["agent", "human", "imported"]
     deleted: bool = False
     deletion_candidate_hash: str | None = None
     baseline_hash: str | None = None

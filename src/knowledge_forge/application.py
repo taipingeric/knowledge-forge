@@ -47,7 +47,7 @@ from .state import (
     write_state,
 )
 from .timing import ProcessingTimer, processing_phase
-from .validation import validate_bundle
+from .validation import validate_bundle, validate_portable_bundle
 from .workflow import build_workflow
 
 
@@ -319,6 +319,11 @@ def generate(
 
     source, output = resolve_disjoint_trees(source, output)
     reject_tracing()
+    imported = _recognized_import_concepts(source)
+    if imported is not None:
+        with output_lock(output.resolve()):
+            _generate_import_locked(source, output, imported, progress=progress, timing=timing)
+        return
     identity = generation_identity(
         model=model,
         base_url=base_url,
@@ -336,6 +341,64 @@ def generate(
             progress=progress,
             timing=timing,
         )
+
+
+def _recognized_import_concepts(source: Path) -> dict[str, str] | None:
+    """Return a portable-valid marked Bundle's Concepts, or None for ordinary sources."""
+    index = source / "index.md"
+    if not index.is_file():
+        return None
+    try:
+        metadata, _ = parse_markdown(index.read_text(encoding="utf-8"))
+    except ValidationFailure:
+        return None
+    if metadata != {"okf_version": "0.2"}:
+        return None
+    validate_portable_bundle(source)
+    concepts: dict[str, str] = {}
+    for path in sorted(source.rglob("*.md")):
+        if path.name in {"index.md", "log.md"} or ".knowledge-forge" in path.parts:
+            continue
+        concept_id = path.relative_to(source).with_suffix("").as_posix()
+        concepts[concept_id] = path.read_text(encoding="utf-8")
+    return concepts
+
+
+def _generate_import_locked(
+    source: Path,
+    output: Path,
+    concepts: dict[str, str],
+    *,
+    progress: Callable[[str], None] | None,
+    timing: ProcessingTimer | None,
+) -> None:
+    """Publish a recognized import Bundle without model configuration or reasoning."""
+    report = progress or (lambda _: None)
+    output = output.resolve()
+    if output.exists() and (not output.is_dir() or any(output.iterdir())):
+        raise ValidationFailure("generate requires a missing or empty --out directory")
+    report("Validating and importing the recognized OKF Bundle...")
+    identity = GenerationIdentity(
+        model="import-only",
+        endpoint="local://import",
+        language="preserved",
+        max_agent_steps=1,
+    )
+    with staged_bundle(output, copy_existing=False) as staging:
+        with processing_phase(timing, "OKF import"):
+            _write_bundle(
+                staging,
+                concepts=concepts,
+                baselines=concepts,
+                ownership={concept_id: "imported" for concept_id in concepts},
+                sources=[],
+                generation=identity,
+                previous_state=None,
+                action="Import",
+                log_detail=f"Imported {len(concepts)} Concepts without reasoning.",
+            )
+        with processing_phase(timing, "Atomic publication"):
+            publish_staging(staging, output)
 
 
 def _generate_locked(

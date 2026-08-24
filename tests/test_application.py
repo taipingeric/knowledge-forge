@@ -19,7 +19,7 @@ from knowledge_forge.models import (
 )
 from knowledge_forge.okf import dump_markdown, parse_markdown, render_concept
 from knowledge_forge.sources import logical_resource, sha256_text
-from knowledge_forge.state import bundle_hash, load_state, write_state
+from knowledge_forge.state import bundle_hash, load_baseline, load_state, write_state
 from knowledge_forge.timing import ProcessingTimer
 from knowledge_forge.validation import validate_bundle
 
@@ -79,6 +79,37 @@ def generate_bundle(tmp_path: Path) -> tuple[Path, Path]:
         max_agent_steps=50,
     )
     return source_dir, output
+
+
+def test_generate_imports_marked_okf_bundle_without_model_or_agent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "import"
+    (source / "concepts").mkdir(parents=True)
+    (source / "index.md").write_text('---\nokf_version: "0.2"\n---\n# Source navigation\n')
+    original = (
+        "---\ntype: Custom Type\ntitle: 原文\nextension: preserved\n---\n\n"
+        "# 原文\n\n[link](https://example.test) ![image](asset.png)\n"
+    )
+    (source / "concepts" / "original.md").write_text(original)
+    output = tmp_path / "knowledge"
+    monkeypatch.setattr(application, "_run_agent", lambda **_: pytest.fail("must not reason"))
+
+    application.generate(
+        source=source,
+        output=output,
+        model="",
+        api_key="",
+        base_url=None,
+        language="auto",
+        max_agent_steps=0,
+    )
+
+    assert (output / "concepts" / "original.md").read_text() == original
+    assert "Source navigation" not in (output / "index.md").read_text()
+    state = load_state(output)
+    assert state.concepts["concepts/original"].ownership == "imported"
+    assert load_baseline(output, "concepts/original").raw_markdown == original
 
 
 class TickingClock:

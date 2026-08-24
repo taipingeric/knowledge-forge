@@ -141,13 +141,16 @@ def validate_bundle(
     for concept_id, raw in concepts.items():
         if not re.fullmatch(r"concepts/[a-z0-9]+(?:-[a-z0-9]+)*", concept_id):
             errors.append(f"Invalid Concept ID: {concept_id}")
-        errors.extend(validate_concept(raw, concept_id, source_pages))
         concept_state = state.concepts.get(concept_id)
+        if concept_state is not None and concept_state.ownership == "imported":
+            errors.extend(validate_portable_concept(raw, concept_id))
+        else:
+            errors.extend(validate_concept(raw, concept_id, source_pages))
         if concept_state is None:
             continue  # a newly human-authored Concept is registered by the next mutation
         if concept_state.managed_fields_hash != managed_fields_hash(raw):
             errors.append(f"Tool-managed provenance was modified: {concept_id}.md")
-        if concept_state.ownership == "agent":
+        if concept_state.ownership in {"agent", "imported"}:
             try:
                 baseline = load_baseline(bundle, concept_id)
                 if baseline.sha256 != concept_state.baseline_hash:
