@@ -460,6 +460,8 @@ def _update_locked(
     progress: Callable[[str], None] | None = None,
     timing: ProcessingTimer | None = None,
 ) -> bool:
+    """Reconcile a changed source set or Bundle while the output lock is held."""
+
     if migration_available(output):
         with staged_bundle(output, copy_existing=True) as staging:
             migrate_bundle(staging)
@@ -477,7 +479,6 @@ def _update_locked(
             )
             publish_staging(staging, output)
             return changed
-    """Reconcile a changed source set or Bundle while the output lock is held."""
     report = progress or (lambda _: None)
     output = output.resolve()
     _report_tool_call_mode(report, parallel_tool_calls)
