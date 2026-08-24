@@ -197,6 +197,53 @@ Revenue follows the approved policy.[^revenue-policy]
     assert result.stdout.strip() == "PASS (portable OKF 0.2)"
 
 
+def test_validate_command_accepts_v02_datetime_fields(tmp_path: Path) -> None:
+    output = tmp_path / "knowledge"
+    output.mkdir()
+    (output / "metric.md").write_text(
+        """---
+type: Metric
+stale_after: 2026-12-31T00:00:00Z
+usage_window: {from: 2026-08-01T00:00:00Z, to: 2026-08-31T23:59:59+00:00}
+sources:
+  - id: policy
+    resource: https://example.com/policy
+    last_modified: 2026-08-16T12:30:00+00:00
+---
+
+The metric follows the policy.[^policy]
+
+[^policy]: Policy
+"""
+    )
+
+    result = CliRunner().invoke(cli.app, ["validate", "--out", str(output)])
+
+    assert result.exit_code == 0
+
+
+def test_validate_command_accepts_inline_attested_computation(tmp_path: Path) -> None:
+    output = tmp_path / "knowledge"
+    output.mkdir()
+    (output / "metric.md").write_text(
+        """---
+type: Attested Computation
+runtime: python
+---
+
+# Computation
+
+```python
+return 42
+```
+"""
+    )
+
+    result = CliRunner().invoke(cli.app, ["validate", "--out", str(output)])
+
+    assert result.exit_code == 0
+
+
 @pytest.mark.parametrize(
     ("concept_type", "frontmatter", "body", "expected_error"),
     [
@@ -229,6 +276,24 @@ Revenue follows the approved policy.[^revenue-policy]
             "citation [^missing] does not match any sources[].id",
         ),
         ("Attested Computation", "", "", "runtime is required"),
+        (
+            "Attested Computation",
+            "runtime: python\n",
+            "",
+            "must provide either computation",
+        ),
+        (
+            "Attested Computation",
+            "runtime: python\ncomputation: references/metric.sql\n",
+            "# Computation\n\n```sql\nSELECT 1\n```\n",
+            "must provide computation in a file or an inline fence",
+        ),
+        (
+            "Attested Computation",
+            "runtime: python\ncomputation: references/metric.sql\n",
+            "# Computation\n\n```sql\nSELECT 1\n```\n\n```sql\nSELECT 2\n```\n",
+            "must provide computation in a file or an inline fence",
+        ),
         (
             "Attested Computation",
             "runtime: python\nparameters:\n  - {name: year, type: integer, required: required}\n",

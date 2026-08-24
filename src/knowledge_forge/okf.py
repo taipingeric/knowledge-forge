@@ -22,6 +22,7 @@ PORTABLE_FOOTNOTE_REFERENCE = re.compile(r"\[\^([^\]\s]+)\](?!:)")
 ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 ACTOR = re.compile(r"^(?:[^\s:/]+:\S+|\S+/\S+)$")
 PORTABLE_STATUSES = {"draft", "stable", "deprecated"}
+FENCED_CODE_BLOCK = re.compile(r"^```[^\n]*\n.*?^```[ \t]*$", re.DOTALL | re.MULTILINE)
 
 
 def parse_markdown(raw: str) -> tuple[dict[str, Any], str]:
@@ -148,13 +149,27 @@ def _date_value(value: object) -> date | None:
 
 def _datetime_value(value: object) -> datetime | None:
     if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str) and "T" in value.upper():
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00").replace("z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed
+
+
+def _date_or_datetime_value(value: object) -> date | datetime | None:
+    return _date_value(value) or _datetime_value(value)
+
+
+def _temporal_key(value: date | datetime) -> datetime:
+    if isinstance(value, datetime):
         return value
-    if not isinstance(value, str) or "T" not in value.upper():
-        return None
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00").replace("z", "+00:00"))
-    except ValueError:
-        return None
+    return datetime.combine(value, datetime.min.time(), tzinfo=UTC)
 
 
 def _validate_actor(value: object, field: str) -> list[str]:
@@ -170,15 +185,15 @@ def _validate_actor(value: object, field: str) -> list[str]:
 
 def _validate_usage_window(value: object, field: str) -> list[str]:
     if not isinstance(value, dict):
-        return [f"{field} must be a mapping with from and to dates"]
+        return [f"{field} must be a mapping with from and to dates or datetimes"]
     errors: list[str] = []
-    start = _date_value(value.get("from"))
-    end = _date_value(value.get("to"))
+    start = _date_or_datetime_value(value.get("from"))
+    end = _date_or_datetime_value(value.get("to"))
     if start is None:
-        errors.append(f"{field}.from must be a YYYY-MM-DD date")
+        errors.append(f"{field}.from must be a YYYY-MM-DD date or ISO 8601 datetime")
     if end is None:
-        errors.append(f"{field}.to must be a YYYY-MM-DD date")
-    if start is not None and end is not None and start > end:
+        errors.append(f"{field}.to must be a YYYY-MM-DD date or ISO 8601 datetime")
+    if start is not None and end is not None and _temporal_key(start) > _temporal_key(end):
         errors.append(f"{field}.from must not be after {field}.to")
     return errors
 
@@ -231,8 +246,13 @@ def _validate_portable_sources(metadata: dict[str, Any], body: str) -> list[str]
                 errors.extend(
                     _validate_usage_window(source["usage_window"], f"{field}.usage_window")
                 )
-            if "last_modified" in source and _date_value(source["last_modified"]) is None:
-                errors.append(f"{field}.last_modified must be a YYYY-MM-DD date")
+            if (
+                "last_modified" in source
+                and _date_or_datetime_value(source["last_modified"]) is None
+            ):
+                errors.append(
+                    f"{field}.last_modified must be a YYYY-MM-DD date or ISO 8601 datetime"
+                )
 
     for citation_id in sorted(set(PORTABLE_FOOTNOTE_REFERENCE.findall(body))):
         if citation_id not in source_ids:
@@ -321,6 +341,23 @@ def _validate_attested_computation(metadata: dict[str, Any]) -> list[str]:
     return errors
 
 
+def _validate_computation_representation(metadata: dict[str, Any], body: str) -> list[str]:
+    if metadata.get("type") != "Attested Computation":
+        return []
+    heading = re.search(r"^# Computation[ \t]*$", body, re.MULTILINE)
+    section = body[heading.end() :] if heading else ""
+    next_heading = re.search(r"^# [^#].*$", section, re.MULTILINE)
+    if next_heading:
+        section = section[: next_heading.start()]
+    inline_count = len(FENCED_CODE_BLOCK.findall(section))
+    has_file = _non_empty_string(metadata.get("computation"))
+    if has_file and inline_count:
+        return ["must provide computation in a file or an inline fence, not both"]
+    if not has_file and inline_count != 1:
+        return ["must provide either computation or one inline fence under # Computation"]
+    return []
+
+
 def validate_portable_concept(raw: str, concept_id: str) -> list[str]:
     """Validate an OKF v0.2 Concept without applying a producer profile."""
     try:
@@ -340,11 +377,12 @@ def validate_portable_concept(raw: str, concept_id: str) -> list[str]:
         errors.append("tags must be a list of non-empty strings")
     if "status" in metadata and metadata["status"] not in PORTABLE_STATUSES:
         errors.append("status must be one of draft, stable, or deprecated")
-    if "stale_after" in metadata and _date_value(metadata["stale_after"]) is None:
-        errors.append("stale_after must be a YYYY-MM-DD date")
+    if "stale_after" in metadata and _date_or_datetime_value(metadata["stale_after"]) is None:
+        errors.append("stale_after must be a YYYY-MM-DD date or ISO 8601 datetime")
     errors.extend(_validate_portable_trust(metadata))
     errors.extend(_validate_portable_sources(metadata, body))
     errors.extend(_validate_attested_computation(metadata))
+    errors.extend(_validate_computation_representation(metadata, body))
     return [f"{concept_id}: {error}" for error in errors]
 
 
