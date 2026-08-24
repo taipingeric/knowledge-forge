@@ -64,20 +64,33 @@ def detect_staleness(
     return stale
 
 
-def write_staleness_report(output: Path, stale: list[dict[str, object]]) -> Path:
+def write_staleness_report(
+    output: Path,
+    stale_concepts: list[dict[str, object]],
+    *,
+    planning_stale: bool,
+    generation_stale: list[str],
+) -> Path:
     """Write the external human and machine-readable Regeneration Impact Report."""
     work = output.parent / f"{output.name}.staleness"
     work.mkdir(exist_ok=True)
-    (work / "manifest.json").write_text(
-        json.dumps({"stale": stale}, indent=2) + "\n", encoding="utf-8"
-    )
+    manifest = {
+        "stale_concepts": stale_concepts,
+        "planning_stale": planning_stale,
+        "generation_stale": generation_stale,
+    }
+    (work / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     report = output.parent / f"{output.name}.staleness.md"
     lines = ["# Knowledge Forge Staleness", ""]
-    for item in stale:
+    for item in stale_concepts:
         lines.append(
             f"- `{item['concept_id']}` / `{item['reference_id']}`: `{item['source_id']}` "
             f"{item['locator']}; previous `{item['previous_hash']}`, "
             f"current `{item['current_hash'] or 'missing'}`"
         )
+    if planning_stale:
+        lines.append("- Planning coverage is stale because the authoritative source set changed.")
+    for concept_id in generation_stale:
+        lines.append(f"- `{concept_id}`: generation identity changed.")
     report.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return report

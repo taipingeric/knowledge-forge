@@ -11,7 +11,7 @@ from .application import generate as generate_bundle
 from .application import reconcile as reconcile_bundle
 from .application import update as update_bundle
 from .application import verify as verify_concept
-from .errors import KnowledgeForgeError, ReconciliationRequired
+from .errors import KnowledgeForgeError, ReconciliationRequired, StalenessDetected
 from .security import resolve_disjoint_trees
 from .sources import extract_sources
 from .state import PRIVATE_DIR
@@ -86,6 +86,9 @@ def _run(operation) -> None:
     except ReconciliationRequired as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(3) from exc
+    except StalenessDetected as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(4) from exc
     except KnowledgeForgeError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(2) from exc
