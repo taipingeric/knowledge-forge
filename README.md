@@ -167,6 +167,14 @@ uv run knowledge-forge validate --out ./knowledge
 
 The default command performs Portable OKF Validation and prints `PASS (portable OKF 0.2)` on success. It accepts any conformant v0.2 Bundle without requiring `.knowledge-forge/` private state, a root `index.md`, an `okf_version` marker, a `concepts/` namespace, or Knowledge Forge's controlled Concept types. Every non-reserved Markdown file must have parseable YAML frontmatter with a non-empty string `type`; `index.md` and `log.md` are reserved at every directory level. When optional v0.2 provenance, trust, freshness, lifecycle, citation, or attestation fields are present, their standard structure is validated. Producer extension fields remain allowed. Validation is read-only, and a failure reports actionable errors with exit code 2.
 
+Portable validation ignores private Knowledge Forge state. If `.knowledge-forge/` is present, it prints `managed state detected — run with --managed for full validation` on stderr while preserving the portable result. Run the explicit managed profile to validate the portable Bundle first, then state integrity, tool-managed files, provenance, hashes, baselines, ownership, and filesystem consistency:
+
+```bash
+uv run knowledge-forge validate --managed --out ./knowledge
+```
+
+To also verify the complete authoritative PDF set, provide `--source`. Managed validation remains read-only and prints `PASS (managed Knowledge Forge Bundle)` on success.
+
 Add human verification to the current Concept version:
 
 ```bash

@@ -31,6 +31,98 @@ def test_validate_command_accepts_a_state_free_portable_bundle_read_only(tmp_pat
     assert not (output / ".knowledge-forge").exists()
 
 
+def test_validate_command_portable_warns_about_managed_state_without_reading_it(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "knowledge"
+    concept = output / "guide.md"
+    concept.parent.mkdir(parents=True)
+    concept.write_text("---\ntype: Guide\n---\n\n# Guide\n")
+    private_state = output / ".knowledge-forge" / "state.json"
+    private_state.parent.mkdir()
+    private_state.write_text("not a Knowledge Forge state")
+    before = sorted(
+        (path.relative_to(output), path.read_bytes())
+        for path in output.rglob("*")
+        if path.is_file()
+    )
+
+    result = CliRunner().invoke(cli.app, ["validate", "--out", str(output)])
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "PASS (portable OKF 0.2)"
+    assert "managed state detected — run with --managed for full validation" in result.stderr
+    assert sorted(
+        (path.relative_to(output), path.read_bytes())
+        for path in output.rglob("*")
+        if path.is_file()
+    ) == before
+
+
+def test_validate_command_managed_validates_portable_then_managed_layer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "knowledge"
+    output.mkdir()
+    calls: list[tuple[str, Path, bool | None]] = []
+
+    monkeypatch.setattr(
+        cli,
+        "validate_portable_bundle",
+        lambda bundle: calls.append(("portable", bundle, None)),
+    )
+    monkeypatch.setattr(
+        cli,
+        "validate_bundle",
+        lambda bundle, sources=None, *, check_live_hash=False, **_: calls.append(
+            ("managed", bundle, check_live_hash)
+        ),
+    )
+
+    result = CliRunner().invoke(cli.app, ["validate", "--managed", "--out", str(output)])
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "PASS (managed Knowledge Forge Bundle)"
+    assert calls == [("portable", output.resolve(), None), ("managed", output.resolve(), True)]
+
+
+def test_validate_command_managed_with_source_checks_authoritative_corpus(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "pdfs"
+    output = tmp_path / "knowledge"
+    source.mkdir()
+    output.mkdir()
+    (output / "guide.md").write_text("---\ntype: Guide\n---\n\n# Guide\n")
+    calls: list[tuple[str, object]] = []
+
+    monkeypatch.setattr(
+        cli,
+        "validate_portable_bundle",
+        lambda bundle: calls.append(("portable", bundle)),
+    )
+    monkeypatch.setattr(cli, "extract_sources", lambda root: ["authoritative-source"])
+    monkeypatch.setattr(
+        cli,
+        "validate_bundle",
+        lambda bundle, sources=None, *, check_live_hash=False, **_: calls.append(
+            ("managed", (bundle, sources, check_live_hash))
+        ),
+    )
+
+    result = CliRunner().invoke(
+        cli.app,
+        ["validate", "--managed", "--source", str(source), "--out", str(output)],
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "PASS (managed Knowledge Forge Bundle)"
+    assert calls == [
+        ("portable", output.resolve()),
+        ("managed", (output.resolve(), ["authoritative-source"], True)),
+    ]
+
+
 def test_validate_command_rejects_a_missing_bundle_directory(tmp_path: Path) -> None:
     output = tmp_path / "missing"
 

@@ -14,6 +14,7 @@ from .application import verify as verify_concept
 from .errors import KnowledgeForgeError, ReconciliationRequired
 from .security import resolve_disjoint_trees
 from .sources import extract_sources
+from .state import PRIVATE_DIR
 from .timing import ProcessingTimer
 from .validation import validate_bundle, validate_portable_bundle
 
@@ -64,6 +65,13 @@ ConceptConcurrencyOption = Annotated[
         "--concept-concurrency",
         min=1,
         help="Maximum Concept synthesis tasks to run concurrently.",
+    ),
+]
+ManagedOption = Annotated[
+    bool,
+    typer.Option(
+        "--managed",
+        help="Also validate Knowledge Forge state, provenance, hashes, and filesystem integrity.",
     ),
 ]
 
@@ -193,17 +201,30 @@ def validate_command(
         Path | None,
         typer.Option("--source", exists=True, file_okay=False, readable=True),
     ] = None,
+    managed: ManagedOption = False,
 ) -> None:
-    """Deterministically validate portable OKF v0.2 conformance by default."""
+    """Validate portable OKF conformance, optionally with managed integrity checks."""
 
     def operation() -> None:
-        if source is None:
-            validate_portable_bundle(out.resolve())
+        if source is not None:
+            resolved_source, resolved_output = resolve_disjoint_trees(source, out)
+            validate_portable_bundle(resolved_output)
+            sources = extract_sources(resolved_source)
+            validate_bundle(resolved_output, sources, check_live_hash=True)
+            typer.echo("PASS (managed Knowledge Forge Bundle)")
+            return
+
+        resolved_output = out.resolve()
+        validate_portable_bundle(resolved_output)
+        if not managed:
+            if (resolved_output / PRIVATE_DIR).exists():
+                typer.echo(
+                    "managed state detected — run with --managed for full validation", err=True
+                )
             typer.echo("PASS (portable OKF 0.2)")
             return
-        resolved_source, resolved_output = resolve_disjoint_trees(source, out)
-        sources = extract_sources(resolved_source)
-        validate_bundle(resolved_output, sources)
-        typer.echo("Bundle is valid")
+
+        validate_bundle(resolved_output, check_live_hash=True)
+        typer.echo("PASS (managed Knowledge Forge Bundle)")
 
     _run(operation)
