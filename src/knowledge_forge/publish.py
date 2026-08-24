@@ -12,6 +12,8 @@ from .errors import ValidationFailure
 
 
 def _lock_owner_is_alive(lock: Path) -> bool:
+    """Return whether the process recorded in a mutation lock is still alive."""
+
     try:
         line = lock.read_text(encoding="utf-8").strip()
         pid = int(line.removeprefix("pid="))
@@ -24,10 +26,14 @@ def _lock_owner_is_alive(lock: Path) -> bool:
 
 
 def _journal_path(output: Path) -> Path:
+    """Return the transaction journal path used for publication recovery."""
+
     return output.parent / f".{output.name}.transaction.json"
 
 
 def _recover_interrupted_publication(output: Path) -> None:
+    """Recover or reject an interrupted atomic publication from its journal."""
+
     journal = _journal_path(output)
     if not journal.exists():
         return
@@ -54,6 +60,8 @@ def _recover_interrupted_publication(output: Path) -> None:
 
 @contextmanager
 def output_lock(output: Path) -> Iterator[None]:
+    """Serialize Bundle mutations and recover interrupted publication before yielding."""
+
     output = output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     lock = output.parent / f".{output.name}.knowledge-forge.lock"
@@ -79,6 +87,8 @@ def output_lock(output: Path) -> Iterator[None]:
 
 @contextmanager
 def staged_bundle(output: Path, *, copy_existing: bool) -> Iterator[Path]:
+    """Create a temporary sibling staging tree and remove it if the operation fails."""
+
     output = output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = Path(tempfile.mkdtemp(prefix=f".{output.name}.staging-", dir=output.parent))
@@ -94,6 +104,8 @@ def staged_bundle(output: Path, *, copy_existing: bool) -> Iterator[Path]:
 
 
 def publish_staging(staging: Path, output: Path) -> None:
+    """Publish a staged Bundle with journaled rename and rollback protection."""
+
     output = output.resolve()
     backup = output.parent / f".{output.name}.backup"
     if backup.exists():

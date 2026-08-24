@@ -64,6 +64,8 @@ def migrate_bundle(bundle: Path) -> None:
 
 
 def _migrate_concept(raw: str) -> str:
+    """Convert one legacy Concept's PDF-source citations to typed source references."""
+
     metadata, body = parse_markdown(raw)
     entries = metadata.get("sources", [])
     if not isinstance(entries, list):

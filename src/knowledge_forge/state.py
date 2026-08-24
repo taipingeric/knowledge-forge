@@ -17,18 +17,26 @@ PRIVATE_DIR = ".knowledge-forge"
 
 
 def concept_path(bundle: Path, concept_id: str) -> Path:
+    """Return the public Markdown path for a Concept ID inside a Bundle."""
+
     return bundle / f"{concept_id}.md"
 
 
 def state_path(bundle: Path) -> Path:
+    """Return the private managed-state path for a Bundle."""
+
     return bundle / PRIVATE_DIR / "state.json"
 
 
 def baseline_path(bundle: Path, concept_id: str) -> Path:
+    """Return the private baseline snapshot path for a Concept ID."""
+
     return bundle / PRIVATE_DIR / "baseline" / f"{concept_id}.json"
 
 
 def load_state(bundle: Path) -> ForgeState:
+    """Load, migrate, and integrity-check the private managed state."""
+
     path = state_path(bundle)
     if not path.is_file():
         raise ValidationFailure(f"Knowledge Forge state is missing: {path}")
@@ -51,6 +59,8 @@ def load_state(bundle: Path) -> ForgeState:
 
 
 def _has_valid_raw_integrity_hash(material: dict[str, object]) -> bool:
+    """Check serialized state integrity before parsing or migrating its contents."""
+
     integrity_hash = material.get("integrity_hash")
     if not isinstance(integrity_hash, str):
         return False
@@ -95,6 +105,8 @@ def _migrate_state(material: dict[str, object]) -> dict[str, object]:
 
 
 def write_state(bundle: Path, state: ForgeState) -> None:
+    """Write state after recalculating its deterministic integrity hash."""
+
     path = state_path(bundle)
     path.parent.mkdir(parents=True, exist_ok=True)
     state.integrity_hash = state_integrity_hash(state)
@@ -102,11 +114,15 @@ def write_state(bundle: Path, state: ForgeState) -> None:
 
 
 def state_integrity_hash(state: ForgeState) -> str:
+    """Hash all managed state fields except the self-referential integrity hash."""
+
     material = state.model_dump(mode="json", exclude={"integrity_hash"})
     return sha256_text(json.dumps(material, sort_keys=True, separators=(",", ":")))
 
 
 def load_baseline(bundle: Path, concept_id: str) -> BaselineSnapshot:
+    """Load and verify the exact prior agent-authored baseline for a Concept."""
+
     path = baseline_path(bundle, concept_id)
     if not path.is_file():
         raise ValidationFailure(f"Agent baseline is missing: {path}")
@@ -120,6 +136,8 @@ def load_baseline(bundle: Path, concept_id: str) -> BaselineSnapshot:
 
 
 def write_baseline(bundle: Path, concept_id: str, raw_markdown: str) -> str:
+    """Persist a content-addressed agent baseline and return its digest."""
+
     digest = sha256_text(raw_markdown)
     snapshot = BaselineSnapshot(concept_id=concept_id, raw_markdown=raw_markdown, sha256=digest)
     path = baseline_path(bundle, concept_id)
@@ -129,6 +147,8 @@ def write_baseline(bundle: Path, concept_id: str, raw_markdown: str) -> str:
 
 
 def bundle_hash(bundle: Path, *, include_state: bool = False) -> str:
+    """Hash Bundle files deterministically, optionally including private state."""
+
     material: list[str] = []
     if not bundle.exists():
         return sha256_text("")
@@ -143,6 +163,8 @@ def bundle_hash(bundle: Path, *, include_state: bool = False) -> str:
 
 
 def public_concepts(bundle: Path) -> dict[str, str]:
+    """Read public Concept Markdown while excluding private state and tool files."""
+
     result: dict[str, str] = {}
     concepts = bundle / "concepts"
     if not concepts.exists():
@@ -154,4 +176,6 @@ def public_concepts(bundle: Path) -> dict[str, str]:
 
 
 def canonical_hash(value: object) -> str:
+    """Hash JSON-compatible data using stable key ordering and serialization."""
+
     return sha256_text(json.dumps(value, sort_keys=True, separators=(",", ":"), default=str))
