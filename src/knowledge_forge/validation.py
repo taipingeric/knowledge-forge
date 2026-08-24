@@ -120,7 +120,13 @@ def validate_bundle(
     check_live_hash: bool = False,
     for_mutation: bool = False,
 ) -> ForgeState:
-    """Validate a managed Bundle's public files, private state, sources, and hashes."""
+    """Validate a managed Bundle's files, state, sources, and integrity hashes.
+
+    When ``sources`` is supplied, source references are checked against the supplied
+    evidence counts; ``check_live_hash`` additionally verifies current source hashes.
+    ``for_mutation`` permits the transient inconsistencies expected while a mutation
+    is rebuilding managed files, while still enforcing the private-state contract.
+    """
 
     errors: list[str] = []
     try:

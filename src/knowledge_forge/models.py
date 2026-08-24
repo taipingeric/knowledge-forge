@@ -98,7 +98,7 @@ class MarkdownSource(KnowledgeSource):
 
 
 class Evidence(BaseModel):
-    """Reference the pages from one Knowledge Source used by a Concept."""
+    """Reference PDF pages or typed Markdown locators from one Knowledge Source."""
 
     source_id: str
     pages: list[int] = Field(default_factory=list)
@@ -115,6 +115,8 @@ class Evidence(BaseModel):
 
     @model_validator(mode="after")
     def require_locator(self) -> Evidence:
+        """Require each evidence reference to identify at least one source location."""
+
         if not self.pages and not self.locators:
             raise ValueError("evidence must include pages or typed locators")
         return self
