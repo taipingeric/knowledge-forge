@@ -166,10 +166,10 @@ def public_concepts(bundle: Path) -> dict[str, str]:
     """Read public Concept Markdown while excluding private state and tool files."""
 
     result: dict[str, str] = {}
-    concepts = bundle / "concepts"
-    if not concepts.exists():
-        return result
-    for path in sorted(concepts.rglob("*.md")):
+    for path in sorted(bundle.rglob("*.md")):
+        relative = path.relative_to(bundle)
+        if relative.parts[0] == PRIVATE_DIR or path.name in {"index.md", "log.md"}:
+            continue
         concept_id = path.relative_to(bundle).with_suffix("").as_posix()
         result[concept_id] = path.read_text(encoding="utf-8")
     return result
