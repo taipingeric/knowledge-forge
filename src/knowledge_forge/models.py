@@ -7,7 +7,9 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 WORKFLOW_VERSION = "3"
-STATE_VERSION = 1
+GENERATION_POLICY_VERSION = "1"
+STATE_SCHEMA_VERSION = 2
+LEGACY_STATE_SCHEMA_VERSION = 1
 CONCEPT_TYPES = ("Concept", "Definition", "Policy", "Procedure", "FAQ")
 
 
@@ -133,7 +135,9 @@ class SourceState(BaseModel):
 
 
 class GenerationIdentity(BaseModel):
-    workflow_version: str = WORKFLOW_VERSION
+    model_config = ConfigDict(extra="forbid")
+
+    generation_policy_version: str = GENERATION_POLICY_VERSION
     model: str
     endpoint: str
     language: str
@@ -146,7 +150,8 @@ class GenerationIdentity(BaseModel):
 class ForgeState(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    state_version: int = STATE_VERSION
+    state_version: int = STATE_SCHEMA_VERSION
+    workflow_version: str = WORKFLOW_VERSION
     integrity_hash: str = ""
     generation: GenerationIdentity
     source_set_hash: str

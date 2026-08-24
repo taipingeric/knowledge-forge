@@ -235,7 +235,9 @@ knowledge/
     baseline/<concept-id>.json
 ```
 
-`.knowledge-forge/state.json` 保存 workflow 與 Generation Identity、source dependencies、ownership、overrides 與 verification audit，並以 deterministic checksum 偵測意外修改。`baseline/` 使用 JSON 包裝完整 agent Markdown，避免被 OKF 誤認為公開 Concept Document。這兩者都是 tool-managed state，不應人工編輯。
+`.knowledge-forge/state.json` 保存 source dependencies、ownership、overrides、verification audit，以及刻意分離的三種版本。`state_version` 是 private 的 **State Schema Version**，負責 deterministic state migration；頂層的 `workflow_version` 描述 orchestration behavior，因此只改變它不需要重新產生 Concept。`generation.generation_policy_version` 加上 model、endpoint、language、step budget、tool-call mode 與 Concept concurrency 共同構成 **Generation Identity**；改變任一會產生不同的 candidate，必須重新產生。
+
+目前 schema 為 v2。checksum 驗證過的 v1 PDF state 只會透過明確的 compatibility migration 載入；不支援或未知的 schema version 會以清楚錯誤失敗，絕不被默默重新解讀。compatibility loading 是 read-only；會發布 managed state 的 mutation 則會以 atomic 方式寫入 current schema。state serialization 與 checksum 都是 deterministic。`baseline/` 使用 JSON 包裝完整 agent Markdown，避免被 OKF 誤認為公開 Concept Document。這兩者都是 tool-managed state，不應人工編輯。
 
 每個 source entry 使用 durable logical URN，並公開記錄內容 hash 與頁碼：
 

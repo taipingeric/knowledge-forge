@@ -4,7 +4,13 @@ import json
 from pathlib import Path
 
 from .errors import ValidationFailure
-from .models import BaselineSnapshot, ForgeState
+from .models import (
+    GENERATION_POLICY_VERSION,
+    LEGACY_STATE_SCHEMA_VERSION,
+    STATE_SCHEMA_VERSION,
+    BaselineSnapshot,
+    ForgeState,
+)
 from .sources import sha256_text
 
 PRIVATE_DIR = ".knowledge-forge"
@@ -27,12 +33,62 @@ def load_state(bundle: Path) -> ForgeState:
     if not path.is_file():
         raise ValidationFailure(f"Knowledge Forge state is missing: {path}")
     try:
-        state = ForgeState.model_validate_json(path.read_text(encoding="utf-8"))
+        material = json.loads(path.read_text(encoding="utf-8"))
     except Exception as exc:
         raise ValidationFailure(f"Invalid Knowledge Forge state: {path}: {exc}") from exc
-    if state.integrity_hash != state_integrity_hash(state):
+    if not isinstance(material, dict):
+        raise ValidationFailure(f"Invalid Knowledge Forge state: {path}: expected an object")
+    if not _has_valid_raw_integrity_hash(material):
         raise ValidationFailure(f"Knowledge Forge state integrity check failed: {path}")
+    try:
+        state = ForgeState.model_validate(_migrate_state(material))
+    except ValidationFailure:
+        raise
+    except Exception as exc:
+        raise ValidationFailure(f"Invalid Knowledge Forge state: {path}: {exc}") from exc
+    state.integrity_hash = state_integrity_hash(state)
     return state
+
+
+def _has_valid_raw_integrity_hash(material: dict[str, object]) -> bool:
+    integrity_hash = material.get("integrity_hash")
+    if not isinstance(integrity_hash, str):
+        return False
+    unsigned = {key: value for key, value in material.items() if key != "integrity_hash"}
+    return integrity_hash == canonical_hash(unsigned)
+
+
+def _migrate_state(material: dict[str, object]) -> dict[str, object]:
+    """Convert a supported managed-state schema into the current representation."""
+    version = material.get("state_version")
+    if type(version) is not int:
+        raise ValidationFailure(
+            "Unsupported State Schema Version "
+            f"{version!r}; supported versions are {LEGACY_STATE_SCHEMA_VERSION} and "
+            f"{STATE_SCHEMA_VERSION}."
+        )
+    if version == STATE_SCHEMA_VERSION:
+        return material
+    if version != LEGACY_STATE_SCHEMA_VERSION:
+        raise ValidationFailure(
+            "Unsupported State Schema Version "
+            f"{version!r}; supported versions are {LEGACY_STATE_SCHEMA_VERSION} and "
+            f"{STATE_SCHEMA_VERSION}."
+        )
+
+    migrated = dict(material)
+    legacy_generation = migrated.get("generation")
+    if not isinstance(legacy_generation, dict):
+        raise ValidationFailure("Invalid schema v1 state: generation must be an object")
+    generation = dict(legacy_generation)
+    legacy_workflow_version = generation.pop("workflow_version", None)
+    if not isinstance(legacy_workflow_version, str):
+        raise ValidationFailure("Invalid schema v1 state: generation.workflow_version is required")
+    generation["generation_policy_version"] = GENERATION_POLICY_VERSION
+    migrated["generation"] = generation
+    migrated["workflow_version"] = legacy_workflow_version
+    migrated["state_version"] = STATE_SCHEMA_VERSION
+    return migrated
 
 
 def write_state(bundle: Path, state: ForgeState) -> None:
