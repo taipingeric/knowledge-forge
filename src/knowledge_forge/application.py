@@ -260,8 +260,8 @@ def _run_agent(
     report = progress or (lambda _: None)
     try:
         page_count = sum(len(source.evidence) for source in sources)
-        report(f"Indexing {page_count} pages from {len(sources)} PDFs...")
-        with processing_phase(timing, "PDF indexing"):
+        report(f"Indexing {page_count} evidence units from {len(sources)} Knowledge Sources...")
+        with processing_phase(timing, "Knowledge Source indexing"):
             index = EvidenceIndex(temporary / "pages.sqlite")
             try:
                 index.add(sources)
@@ -350,10 +350,11 @@ def _generate_locked(
     if output.exists() and (not output.is_dir() or any(output.iterdir())):
         raise ValidationFailure("generate requires a missing or empty --out directory")
     _report_tool_call_mode(report, generation.parallel_tool_calls)
-    report("Reading PDF sources...")
-    with processing_phase(timing, "PDF Source reading"):
+    report("Reading Knowledge Sources...")
+    with processing_phase(timing, "Knowledge Source reading"):
         sources = extract_sources(source)
-    report(f"Loaded {len(sources)} PDFs with {sum(len(item.evidence) for item in sources)} pages.")
+    evidence_count = sum(len(item.evidence) for item in sources)
+    report(f"Loaded {len(sources)} Knowledge Sources with {evidence_count} evidence units.")
     concepts, output_language = _run_agent(
         sources=sources,
         generation=generation,
@@ -376,7 +377,9 @@ def _generate_locked(
                 generation=generation,
                 previous_state=None,
                 action="Generation",
-                log_detail=f"Created {len(concepts)} Concepts from {len(sources)} PDF sources.",
+                log_detail=(
+                    f"Created {len(concepts)} Concepts from {len(sources)} Knowledge Sources."
+                ),
             )
         report("Publishing the bundle atomically...")
         with processing_phase(timing, "Atomic publication"):
@@ -479,10 +482,11 @@ def _update_locked(
     report("Validating the current bundle...")
     with processing_phase(timing, "Current Bundle validation"):
         state = validate_bundle(output, for_mutation=True)
-    report("Reading PDF sources...")
-    with processing_phase(timing, "PDF Source reading"):
+    report("Reading Knowledge Sources...")
+    with processing_phase(timing, "Knowledge Source reading"):
         sources = extract_sources(source)
-    report(f"Loaded {len(sources)} PDFs with {sum(len(item.evidence) for item in sources)} pages.")
+    evidence_count = sum(len(item.evidence) for item in sources)
+    report(f"Loaded {len(sources)} Knowledge Sources with {evidence_count} evidence units.")
     identity = generation_identity(
         model=model,
         base_url=base_url,

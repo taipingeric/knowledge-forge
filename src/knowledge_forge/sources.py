@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 import unicodedata
 from pathlib import Path
@@ -10,7 +11,16 @@ from urllib.parse import quote
 from pypdf import PdfReader
 
 from .errors import SearchQueryFailure, ValidationFailure
-from .models import EvidenceLocator, KnowledgeSource, PDFPageLocator, PDFSource, SourcePage
+from .models import (
+    EvidenceLocator,
+    EvidenceUnit,
+    KnowledgeSource,
+    MarkdownBlockLocator,
+    MarkdownSource,
+    PDFPageLocator,
+    PDFSource,
+    SourcePage,
+)
 
 
 def sha256_bytes(value: bytes) -> str:
@@ -60,9 +70,30 @@ def extract_sources(root: Path) -> list[KnowledgeSource]:
     root = root.resolve()
     failures: list[str] = []
     sources: list[KnowledgeSource] = []
-    for path in discover_pdfs(root):
+    paths = _discover_source_files(root)
+    marked_roots = _marked_okf_roots(root, paths)
+    for path in paths:
         source_id = unicodedata.normalize("NFC", path.relative_to(root).as_posix())
         try:
+            if any(parent == path.parent or parent in path.parents for parent in marked_roots):
+                raise ValueError("not-yet-supported import boundary")
+            if path.suffix.casefold() == ".md":
+                raw = path.read_bytes()
+                try:
+                    text = raw.decode("utf-8")
+                except UnicodeDecodeError as exc:
+                    raise ValueError("Markdown source is not valid UTF-8") from exc
+                if not text.strip():
+                    raise ValueError("Markdown source is empty")
+                sources.append(
+                    MarkdownSource(
+                        id=source_id,
+                        resource=logical_resource(source_id, "markdown"),
+                        content_sha256=sha256_bytes(raw),
+                        evidence=_markdown_evidence(text),
+                    )
+                )
+                continue
             reader = PdfReader(path)
             if reader.is_encrypted:
                 raise ValueError("encrypted PDFs are not supported")
@@ -84,8 +115,91 @@ def extract_sources(root: Path) -> list[KnowledgeSource]:
         except Exception as exc:  # pypdf exposes several parser-specific errors
             failures.append(f"{source_id}: {exc}")
     if failures:
-        raise ValidationFailure("Invalid PDF source set:\n- " + "\n- ".join(failures))
+        raise ValidationFailure("Invalid Knowledge Source set:\n- " + "\n- ".join(failures))
     return sources
+
+
+def _discover_source_files(root: Path) -> list[Path]:
+    if not root.is_dir():
+        raise ValidationFailure(f"Source directory does not exist: {root}")
+    found: list[Path] = []
+    identities: dict[str, Path] = {}
+    for path in sorted(root.rglob("*")):
+        if path.is_symlink():
+            raise ValidationFailure(f"Symlinks are not allowed in the source tree: {path}")
+        if not path.is_file() or path.suffix.casefold() not in {".pdf", ".md"}:
+            continue
+        relative = path.relative_to(root).as_posix()
+        normalized = unicodedata.normalize("NFC", relative).casefold()
+        if normalized in identities:
+            raise ValidationFailure(
+                f"Knowledge Source identity collision: {identities[normalized]} and {path}"
+            )
+        identities[normalized] = path
+        found.append(path)
+    if not found:
+        raise ValidationFailure(f"No Knowledge Source files found under: {root}")
+    return found
+
+
+def _marked_okf_roots(root: Path, paths: list[Path]) -> set[Path]:
+    roots: set[Path] = set()
+    for path in paths:
+        if path.name != "index.md":
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        if "okf_version:" in text and "0.2" in text:
+            roots.add(path.parent)
+    return roots
+
+
+def _markdown_evidence(text: str) -> list[EvidenceUnit]:
+    lines = text.splitlines(keepends=True)
+    headings: list[tuple[int, int, str]] = []
+    fenced = False
+    for index, line in enumerate(lines):
+        if line.lstrip().startswith(("```", "~~~")):
+            fenced = not fenced
+            continue
+        if fenced:
+            continue
+        stripped = line.rstrip("\r\n")
+        if match := re.match(r"^(#{1,6})[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$", stripped):
+            headings.append((index, len(match.group(1)), match.group(2)))
+    starts = [0] + [item[0] for item in headings]
+    blocks: list[EvidenceUnit] = []
+    paths: list[tuple[int, str]] = []
+    occurrences: dict[tuple[tuple[str, ...], int], int] = {}
+    for block_index, start in enumerate(starts):
+        if block_index == 0:
+            end = headings[0][0] if headings else len(lines)
+            path: list[str] = []
+            occurrence = 1
+        else:
+            heading_index, level, title = headings[block_index - 1]
+            next_same_or_higher = next(
+                (item[0] for item in headings[block_index:] if item[1] <= level), len(lines)
+            )
+            end = next_same_or_higher
+            paths = [item for item in paths if item[0] < level]
+            paths.append((level, title))
+            path = [item[1] for item in paths]
+            key = (tuple(path), level)
+            occurrences[key] = occurrences.get(key, 0) + 1
+            occurrence = occurrences[key]
+        block_text = "".join(lines[start:end])
+        locator = MarkdownBlockLocator(
+            heading_path=path,
+            occurrence=occurrence,
+            content_sha256=sha256_text(block_text),
+        )
+        blocks.append(
+            EvidenceUnit(locator=locator, text=block_text, line_start=start + 1, line_end=end)
+        )
+    return blocks
 
 
 def source_set_hash(sources: list[KnowledgeSource]) -> str:

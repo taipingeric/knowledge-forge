@@ -6,6 +6,10 @@ Knowledge Forge turns team-approved PDF documents into a wiki that conforms to G
 
 Agents and people jointly maintain the resulting Bundle. A later update never silently overwrites human edits. A deterministic three-way merge combines non-overlapping changes. A conflict in the same structural block leaves the live Bundle unchanged and creates an auditable reconciliation workspace.
 
+## Knowledge Sources
+
+The Input Corpus can contain PDFs and ordinary, non-empty UTF-8 Markdown documents. Ordinary Markdown is opaque untrusted evidence: frontmatter, HTML, comments, and body text are indexed without executing includes, fetching URLs, following links, or reading linked images. Markdown evidence uses a durable heading path, same-level occurrence, and content hash; displayed line ranges are diagnostic only. A directory marked as an OKF import root is rejected as not yet supported rather than silently treated as ordinary evidence.
+
 ## MVP scope
 
 - Input: recursively discovered PDFs with complete text layers under a specified directory.
