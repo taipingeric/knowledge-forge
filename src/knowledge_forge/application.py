@@ -53,19 +53,27 @@ from .workflow import build_workflow
 
 
 def _now() -> str:
+    """Return the current UTC timestamp in the Bundle's canonical format."""
+
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _actor(model: str) -> str:
+    """Normalize a model name into the process actor identifier stored in metadata."""
+
     normalized = model.strip().replace(" ", "-")
     return f"knowledge-forge/{normalized}"
 
 
 def _log_entry(action: str, detail: str) -> str:
+    """Render one dated operation entry for the human-readable Bundle log."""
+
     return f"## {_now()[:10]}\n* **{action}**: {detail}\n"
 
 
 def _append_log(existing: str, entry: str) -> str:
+    """Prepend an operation entry while preserving the log's stable heading."""
+
     if not existing.strip():
         return f"# Knowledge Forge Update Log\n\n{entry}"
     marker = "# Knowledge Forge Update Log\n"
@@ -74,11 +82,15 @@ def _append_log(existing: str, entry: str) -> str:
 
 
 def _report_tool_call_mode(report: Callable[[str], None], parallel: bool) -> None:
+    """Report whether the agent uses native parallel or compatibility tool calls."""
+
     mode = "parallel" if parallel else "non-parallel compatibility"
     report(f"Tool-call mode: {mode}.")
 
 
 def _source_states(sources: list[KnowledgeSource]) -> dict[str, SourceState]:
+    """Snapshot source hashes and evidence counts for managed-state validation."""
+
     return {
         source.id: SourceState(
             content_sha256=source.content_sha256, page_count=len(source.evidence)
@@ -273,6 +285,8 @@ def _run_agent(
                 raise
 
         def agent_factory() -> ReasoningAgent:
+            """Create an agent sharing the temporary evidence index for this run."""
+
             return ReasoningAgent(
                 index=index,
                 sources=sources,
@@ -477,6 +491,8 @@ def _preserve_verification(current: str, merged: str) -> str:
 
 
 def _same_generation_request(left: GenerationIdentity, right: GenerationIdentity) -> bool:
+    """Compare generation settings while ignoring the output language discovered by planning."""
+
     return left.model_dump(exclude={"output_language"}) == right.model_dump(
         exclude={"output_language"}
     )

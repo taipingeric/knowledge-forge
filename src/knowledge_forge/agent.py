@@ -83,11 +83,15 @@ class _StepCounter(BaseCallbackHandler):
     def on_chat_model_start(
         self, serialized: dict[str, Any], messages: list[list[Any]], *, run_id: UUID, **_: Any
     ) -> None:
+        """Record a chat-model run so the agent's step budget counts it once."""
+
         self.run_ids.add(run_id)
 
     def on_llm_start(
         self, serialized: dict[str, Any], prompts: list[str], *, run_id: UUID, **_: Any
     ) -> None:
+        """Record a legacy LLM run so callbacks cannot undercount model steps."""
+
         self.run_ids.add(run_id)
 
 

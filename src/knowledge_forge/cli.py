@@ -32,6 +32,8 @@ def load_local_env() -> bool:
 
 
 def main() -> None:
+    """Load invocation-local configuration and dispatch the Typer application."""
+
     load_local_env()
     app()
 
@@ -77,10 +79,14 @@ ManagedOption = Annotated[
 
 
 def _show_progress(message: str) -> None:
+    """Render progress on stderr so command output remains pipeline-friendly."""
+
     typer.echo(f"[knowledge-forge] {message}", err=True)
 
 
 def _run(operation) -> None:
+    """Run a CLI operation and map domain failures to stable exit codes."""
+
     try:
         operation()
     except ReconciliationRequired as exc:
@@ -110,6 +116,8 @@ def generate(
     timing = ProcessingTimer(_show_progress, monotonic)
 
     def operation() -> None:
+        """Execute generation and print the published Bundle path."""
+
         generate_bundle(
             source=source,
             output=out,
@@ -146,6 +154,8 @@ def update(
     timing = ProcessingTimer(_show_progress, monotonic)
 
     def operation() -> None:
+        """Execute update and report whether the Bundle changed."""
+
         changed = update_bundle(
             source=source,
             output=out,
@@ -175,6 +185,8 @@ def reconcile(
     """Apply reviewed conflict resolutions to a pending candidate."""
 
     def operation() -> None:
+        """Apply the supplied reconciliation choices and report publication."""
+
         reconcile_bundle(source=source, output=out, resolution_path=resolution)
         typer.echo(f"Reconciled OKF Bundle: {out.resolve()}")
 
@@ -191,6 +203,8 @@ def verify(
     """Append a human verification event for the current Concept version."""
 
     def operation() -> None:
+        """Record the requested human verification event."""
+
         verify_concept(source=source, output=out, concept_id=concept, actor=by)
         typer.echo(f"Verified {concept} as {by}")
 
@@ -209,6 +223,8 @@ def validate_command(
     """Validate portable OKF conformance, optionally with managed integrity checks."""
 
     def operation() -> None:
+        """Run portable or managed validation according to the command options."""
+
         if source is not None:
             resolved_source, resolved_output = resolve_disjoint_trees(source, out)
             validate_portable_bundle(resolved_output)

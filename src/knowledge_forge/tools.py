@@ -14,6 +14,8 @@ EVIDENCE_LOCATOR = TypeAdapter(EvidenceLocator)
 
 
 def _legacy_page_results(results: list[dict[str, object]]) -> list[dict[str, object]]:
+    """Adapt typed evidence results to the page-shaped contract of legacy tools."""
+
     return [
         {
             "source_id": item["source_id"],
