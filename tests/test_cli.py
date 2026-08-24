@@ -782,11 +782,11 @@ def test_generate_reports_processing_time_without_changing_command_output_or_bun
     assert result.stdout.strip() == f"Generated OKF Bundle: {output.resolve()}"
     assert result.stderr.splitlines() == [
         "[knowledge-forge] Tool-call mode: parallel.",
-        "[knowledge-forge] Reading PDF sources...",
-        "[knowledge-forge] PDF Source reading completed in 1.000s.",
-        "[knowledge-forge] Loaded 1 PDFs with 1 pages.",
-        "[knowledge-forge] Indexing 1 pages from 1 PDFs...",
-        "[knowledge-forge] PDF indexing completed in 1.000s.",
+        "[knowledge-forge] Reading Knowledge Sources...",
+        "[knowledge-forge] Knowledge Source reading completed in 1.000s.",
+        "[knowledge-forge] Loaded 1 Knowledge Sources with 1 evidence units.",
+        "[knowledge-forge] Indexing 1 evidence units from 1 Knowledge Sources...",
+        "[knowledge-forge] Knowledge Source indexing completed in 1.000s.",
         "[knowledge-forge] Planning concepts with the reasoning agent...",
         "[knowledge-forge] Concept planning completed in 1.000s.",
         "[knowledge-forge] Planned 1 concepts in English.",
@@ -839,7 +839,7 @@ def test_failed_generate_reports_total_time_and_preserves_exit_code(
     assert result.stdout == ""
     assert result.stderr.splitlines() == [
         "[knowledge-forge] Tool-call mode: parallel.",
-        "[knowledge-forge] Reading PDF sources...",
+        "[knowledge-forge] Reading Knowledge Sources...",
         "Error: PDF Source failed",
         "[knowledge-forge] Total processing time: 2.000s.",
     ]

@@ -236,7 +236,7 @@ def test_update_noop_reports_only_completed_deterministic_phases(
 
     assert completed_phases(progress) == [
         "Current Bundle validation",
-        "PDF Source reading",
+        "Knowledge Source reading",
         "No-change evaluation",
     ]
     assert bundle_hash(output, include_state=True) == before
@@ -271,7 +271,7 @@ def test_update_baseline_reuse_reports_only_completed_reuse_and_merge_phases(
 
     assert completed_phases(progress) == [
         "Current Bundle validation",
-        "PDF Source reading",
+        "Knowledge Source reading",
         "No-change evaluation",
         "Agent Baseline reuse",
         "Agent candidate merge and conflict detection",
@@ -360,9 +360,9 @@ def test_agent_backed_update_reports_reasoning_and_each_synthesis_phase(
 
     assert completed_phases(progress) == [
         "Current Bundle validation",
-        "PDF Source reading",
+        "Knowledge Source reading",
         "No-change evaluation",
-        "PDF indexing",
+        "Knowledge Source indexing",
         "Concept planning",
         "Concept synthesis 1/1 (refund-policy)",
         "Concept rendering and validation",
@@ -643,7 +643,7 @@ def test_conflict_leaves_live_bundle_untouched_and_can_use_source(
     assert "`policy.pdf` pages 1" in report
     assert completed_phases(progress) == [
         "Current Bundle validation",
-        "PDF Source reading",
+        "Knowledge Source reading",
         "No-change evaluation",
         "Agent candidate merge and conflict detection",
         "Candidate Bundle writing and validation",

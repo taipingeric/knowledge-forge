@@ -10,7 +10,13 @@ from urllib.parse import quote, unquote
 import yaml
 
 from .errors import ValidationFailure
-from .models import CONCEPT_TYPES, ConceptDraft, KnowledgeSource
+from .models import (
+    CONCEPT_TYPES,
+    ConceptDraft,
+    EvidenceLocator,
+    KnowledgeSource,
+    MarkdownBlockLocator,
+)
 from .sources import sha256_text
 
 FRONTMATTER = re.compile(
@@ -84,9 +90,16 @@ def expand_ranges(ranges: list[str]) -> list[int]:
     return sorted(set(pages))
 
 
-def source_reference_id(source_identity: str, page: int) -> str:
-    """Return the stable Concept-local reference ID for one PDF page."""
-    return f"{quote(source_identity, safe='/')}#pdf_page:{page}"
+def source_reference_id(source_identity: str, locator: EvidenceLocator | int) -> str:
+    """Return a stable Concept-local Source Reference ID for typed evidence."""
+    if isinstance(locator, int):
+        return f"{quote(source_identity, safe='/')}#pdf_page:{locator}"
+    if isinstance(locator, MarkdownBlockLocator):
+        address = quote(
+            json.dumps([locator.heading_path, locator.occurrence], separators=(",", ":"))
+        )
+        return f"{quote(source_identity, safe='/')}#markdown_block:{address}"
+    return f"{quote(source_identity, safe='/')}#pdf_page:{locator.page}"
 
 
 def source_reference_identity(reference_id: str) -> str | None:
@@ -115,16 +128,34 @@ def render_concept(
         source = sources.get(evidence.source_id)
         if source is None:
             raise ValidationFailure(f"Unknown source in concept {draft.slug}: {evidence.source_id}")
-        if max(evidence.pages) > len(source.evidence):
+        if evidence.pages and max(evidence.pages) > len(source.evidence):
             raise ValidationFailure(f"Page outside source bounds in concept {draft.slug}")
-        for page in evidence.pages:
+        locators: list[EvidenceLocator] = [
+            next(
+                unit.locator
+                for unit in source.evidence
+                if unit.locator.kind == "pdf_page" and unit.locator.page == page
+            )
+            for page in evidence.pages
+        ] + evidence.locators
+        known = {
+            json.dumps(unit.locator.model_dump(mode="json"), sort_keys=True)
+            for unit in source.evidence
+        }
+        for locator in locators:
+            if json.dumps(locator.model_dump(mode="json"), sort_keys=True) not in known:
+                raise ValidationFailure(f"Unknown evidence locator in concept {draft.slug}")
             source_entries.append(
                 {
-                    "id": source_reference_id(source.source_identity, page),
+                    "id": source_reference_id(source.source_identity, locator),
                     "resource": source.resource,
                     "content_sha256": source.content_sha256,
-                    "locator": {"kind": "pdf_page", "page": page},
-                    "locator_sha256": _locator_hash(page),
+                    "locator": locator.model_dump(mode="json"),
+                    "locator_sha256": sha256_text(
+                        json.dumps(
+                            locator.model_dump(mode="json"), sort_keys=True, separators=(",", ":")
+                        )
+                    ),
                 }
             )
     metadata: dict[str, Any] = {
