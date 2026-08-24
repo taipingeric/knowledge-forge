@@ -241,6 +241,8 @@ def _run_agent(
     progress: Callable[[str], None] | None = None,
     timing: ProcessingTimer | None = None,
 ) -> tuple[dict[str, str], str]:
+    """Run the planning and synthesis workflow against temporary indexed evidence."""
+
     if not api_key.strip():
         raise ValidationFailure("OPENAI_API_KEY must not be empty")
     temporary = Path(tempfile.mkdtemp(prefix="knowledge-forge-fts-"))
@@ -332,6 +334,8 @@ def _generate_locked(
     progress: Callable[[str], None] | None = None,
     timing: ProcessingTimer | None = None,
 ) -> None:
+    """Build and publish a new Bundle while the caller holds the output lock."""
+
     report = progress or (lambda _: None)
     output = output.resolve()
     if output.exists() and (not output.is_dir() or any(output.iterdir())):
@@ -443,6 +447,8 @@ def _update_locked(
     progress: Callable[[str], None] | None = None,
     timing: ProcessingTimer | None = None,
 ) -> bool:
+    """Reconcile a changed source set or Bundle while the output lock is held."""
+
     report = progress or (lambda _: None)
     output = output.resolve()
     _report_tool_call_mode(report, parallel_tool_calls)
@@ -638,7 +644,7 @@ def _update_locked(
 
 
 def _expand_pages(values: list[str]) -> list[int]:
-    """Expand rendered source page ranges for reconciliation evidence."""
+    """Expand rendered PDF Source page ranges for reconciliation evidence."""
 
     from .okf import expand_ranges
 
@@ -920,6 +926,8 @@ def verify(*, source: Path, output: Path, concept_id: str, actor: str) -> None:
 
 
 def _verify_locked(*, source: Path, output: Path, concept_id: str, actor: str) -> None:
+    """Verify one Concept version while the caller holds the output lock."""
+
     if not actor.startswith("human:") or len(actor) <= len("human:"):
         raise ValidationFailure("--by must use the actor form human:<id>")
     output = output.resolve()

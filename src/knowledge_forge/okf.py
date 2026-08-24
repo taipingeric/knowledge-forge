@@ -90,7 +90,7 @@ def render_concept(
     actor: str,
     generated_at: datetime | None = None,
 ) -> str:
-    """Render a Concept draft with generated metadata and source page provenance."""
+    """Render a Concept draft with generated metadata and PDF Source evidence provenance."""
 
     source_entries: list[dict[str, Any]] = []
     for evidence in sorted(draft.evidence, key=lambda item: item.source_id):
