@@ -431,6 +431,8 @@ def validate_portable_concept(raw: str, concept_id: str) -> list[str]:
 def validate_concept(
     raw: str, concept_id: str, source_pages: dict[str, int] | None = None
 ) -> list[str]:
+    """Validate a managed Concept's type, provenance, evidence, and citations."""
+
     errors: list[str] = []
     try:
         metadata, body = parse_markdown(raw)
@@ -491,6 +493,8 @@ def validate_concept(
 
 
 def render_index(concepts: dict[str, str]) -> str:
+    """Render the deterministic root index for a mapping of Concept documents."""
+
     lines = ["---", 'okf_version: "0.2"', "---", "", "# Knowledge Forge", ""]
     by_type: dict[str, list[tuple[str, dict[str, Any]]]] = {}
     for concept_id, raw in concepts.items():
