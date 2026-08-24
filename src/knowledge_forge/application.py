@@ -85,6 +85,8 @@ def _source_states(sources: list[KnowledgeSource]) -> dict[str, SourceState]:
 
 
 def _source_dependencies(raw: str) -> dict[str, str]:
+    """Extract the source identity-to-content-hash dependencies from a Concept."""
+
     metadata, _ = parse_markdown(raw)
     return {
         str(item["id"]): str(item["content_sha256"])
@@ -94,6 +96,8 @@ def _source_dependencies(raw: str) -> dict[str, str]:
 
 
 def _evidence_from_raw(raw: str) -> list[dict[str, object]]:
+    """Convert rendered Concept source entries into evidence values for conflicts."""
+
     metadata, _ = parse_markdown(raw)
     return [
         {"source_id": item["id"], "pages": _expand_pages(item.get("pages", []))}
@@ -103,6 +107,8 @@ def _evidence_from_raw(raw: str) -> list[dict[str, object]]:
 
 
 def _conflict_evidence_hash(conflict: Conflict) -> str:
+    """Hash conflict evidence so conditional resolutions remain evidence-bound."""
+
     return sha256_text(
         json.dumps(
             [item.model_dump(mode="json") for item in conflict.evidence],
@@ -113,6 +119,8 @@ def _conflict_evidence_hash(conflict: Conflict) -> str:
 
 
 def _candidate_evidence_hash(raw: str) -> str:
+    """Hash the source evidence declared by a candidate Concept document."""
+
     return _conflict_evidence_hash(
         Conflict(
             id="evidence",
@@ -125,6 +133,8 @@ def _candidate_evidence_hash(raw: str) -> str:
 
 
 def _block_value(raw: str, block_id: str) -> str:
+    """Return the exact value used to bind an override to a conflict block."""
+
     if block_id in {"ownership", "document:source-removal", "document:deletion"}:
         return raw
     metadata, body = parse_markdown(raw)
@@ -134,6 +144,8 @@ def _block_value(raw: str, block_id: str) -> str:
 
 
 def _override_matches(override: ConditionalOverride, conflict: Conflict, human_raw: str) -> bool:
+    """Check whether a conditional override still matches human text and evidence."""
+
     return (
         override.concept_id == conflict.concept_id
         and override.block_id == conflict.block_id
@@ -156,6 +168,8 @@ def _write_bundle(
     overrides: list[ConditionalOverride] | None = None,
     deleted: dict[str, str] | None = None,
 ) -> ForgeState:
+    """Write a candidate Bundle, managed state, baselines, and deterministic artifacts."""
+
     deleted = deleted or {}
     concepts_dir = staging / "concepts"
     if concepts_dir.exists():
@@ -286,6 +300,8 @@ def generate(
     progress: Callable[[str], None] | None = None,
     timing: ProcessingTimer | None = None,
 ) -> None:
+    """Generate and atomically publish a new managed Bundle from PDF sources."""
+
     source, output = resolve_disjoint_trees(source, output)
     reject_tracing()
     identity = generation_identity(
@@ -355,6 +371,8 @@ def _generate_locked(
 
 
 def _register_human_concepts(current: dict[str, str], state: ForgeState) -> dict[str, str]:
+    """Preserve recorded ownership and register newly added Concepts as human-owned."""
+
     ownership = {concept_id: item.ownership for concept_id, item in state.concepts.items()}
     for concept_id in current.keys() - state.concepts.keys():
         ownership[concept_id] = "human"
@@ -362,6 +380,8 @@ def _register_human_concepts(current: dict[str, str], state: ForgeState) -> dict
 
 
 def _preserve_verification(current: str, merged: str) -> str:
+    """Carry verification metadata across a merge only when semantic content is unchanged."""
+
     current_meta, _ = parse_markdown(current)
     if "verified" not in current_meta or concept_version_hash(current) != concept_version_hash(
         merged
@@ -391,6 +411,8 @@ def update(
     progress: Callable[[str], None] | None = None,
     timing: ProcessingTimer | None = None,
 ) -> bool:
+    """Update a managed Bundle while preserving human edits and detecting conflicts."""
+
     source, output = resolve_disjoint_trees(source, output)
     reject_tracing()
     with output_lock(output.resolve()):
@@ -616,6 +638,8 @@ def _update_locked(
 
 
 def _expand_pages(values: list[str]) -> list[int]:
+    """Expand rendered source page ranges for reconciliation evidence."""
+
     from .okf import expand_ranges
 
     return expand_ranges(values)
@@ -629,6 +653,8 @@ def _write_reconciliation(
     identity: GenerationIdentity,
     conflicts: list[Conflict],
 ) -> None:
+    """Generate pending, manual, manifest, and report artifacts for conflicts."""
+
     work = output.parent / f"{output.name}.reconciliation"
     report = output.parent / f"{output.name}.reconciliation.md"
     if work.exists():
@@ -705,12 +731,16 @@ def _write_reconciliation(
 
 
 def _report_value(value: str | None) -> str:
+    """Format a conflict value as an indented, human-readable report block."""
+
     if value is None:
         return "_(deleted or absent)_"
     return "\n".join(f"    {line}" for line in value.splitlines()) or "_(empty)_"
 
 
 def _set_conflict_value(raw: str, conflict: Conflict, value: str | None) -> str:
+    """Replace or remove one frontmatter or structural Markdown conflict block."""
+
     if conflict.block_id.startswith("frontmatter:"):
         metadata, body = parse_markdown(raw)
         key = conflict.block_id.removeprefix("frontmatter:")
@@ -731,6 +761,8 @@ def _set_conflict_value(raw: str, conflict: Conflict, value: str | None) -> str:
 
 
 def reconcile(*, source: Path, output: Path, resolution_path: Path) -> None:
+    """Apply a complete resolution file and atomically publish the pending Bundle."""
+
     source, output = resolve_disjoint_trees(source, output)
     reject_tracing()
     with output_lock(output.resolve()):
@@ -738,6 +770,8 @@ def reconcile(*, source: Path, output: Path, resolution_path: Path) -> None:
 
 
 def _reconcile_locked(*, source: Path, output: Path, resolution_path: Path) -> None:
+    """Validate a reconciliation snapshot, apply choices, and publish its resolved Bundle."""
+
     output = output.resolve()
     work = output.parent / f"{output.name}.reconciliation"
     report = output.parent / f"{output.name}.reconciliation.md"
@@ -877,6 +911,8 @@ def _reconcile_locked(*, source: Path, output: Path, resolution_path: Path) -> N
 
 
 def verify(*, source: Path, output: Path, concept_id: str, actor: str) -> None:
+    """Record a human verification event for the current version of one Concept."""
+
     source, output = resolve_disjoint_trees(source, output)
     reject_tracing()
     with output_lock(output.resolve()):

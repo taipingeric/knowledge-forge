@@ -14,6 +14,8 @@ from .timing import ProcessingTimer, ProgressReporter, processing_phase
 
 
 class WorkflowState(TypedDict, total=False):
+    """State passed between planning, synthesis, and Concept validation nodes."""
+
     language: str
     existing_ids: list[str]
     plan: ConceptPlan
@@ -29,6 +31,8 @@ def build_workflow(
     progress: Callable[[str], None] | None = None,
     timing: ProcessingTimer | None = None,
 ):
+    """Build the fixed workflow that plans, synthesizes, and validates Concepts."""
+
     source_map = {source.id: source for source in sources}
     reporter = (
         timing.reporter if timing is not None else ProgressReporter(progress or (lambda _: None))

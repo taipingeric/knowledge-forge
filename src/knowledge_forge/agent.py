@@ -52,6 +52,8 @@ def _serialize_parallel_tool_calls(state: AgentState, _: Any) -> dict[str, objec
 
 
 def _recover_invalid_search(exc: Exception, _: ToolCallRequest) -> str | None:
+    """Return a repair instruction for search syntax errors handled by the agent."""
+
     if isinstance(exc, SearchQueryFailure):
         return (
             "The search query was invalid. Retry with plain words and remove or quote "
@@ -61,11 +63,15 @@ def _recover_invalid_search(exc: Exception, _: ToolCallRequest) -> str | None:
 
 
 class _StepCounter(BaseCallbackHandler):
+    """Count distinct model runs used by one reasoning task."""
+
     def __init__(self) -> None:
         self.run_ids: set[UUID] = set()
 
     @property
     def count(self) -> int:
+        """Return the number of observed chat-model or LLM runs."""
+
         return len(self.run_ids)
 
     def on_chat_model_start(
@@ -97,6 +103,8 @@ Return only the requested structured response through the response tool.
 
 
 class ReasoningAgent:
+    """Run bounded planning and Concept-synthesis tasks over indexed evidence."""
+
     def __init__(
         self,
         *,
@@ -133,6 +141,8 @@ class ReasoningAgent:
 
     @property
     def steps(self) -> int:
+        """Return the number of model calls consumed by this agent instance."""
+
         return self._steps
 
     def _invoke(
@@ -141,6 +151,8 @@ class ReasoningAgent:
         prompt: str,
         validator: Callable[[ResultT], None] | None = None,
     ) -> ResultT:
+        """Invoke the structured-output agent with bounded retries and validation."""
+
         last_error: Exception | None = None
         for attempt in range(3):
             remaining = self._max_steps - self._steps
@@ -198,6 +210,8 @@ class ReasoningAgent:
         )
 
     def plan(self, language: str, existing_ids: list[str]) -> ConceptPlan:
+        """Plan unique cross-document Concepts in the requested Bundle language."""
+
         manifest = [
             {"id": source.id, "sha256": source.content_sha256, "pages": len(source.evidence)}
             for source in self._sources.values()
@@ -225,6 +239,8 @@ class ReasoningAgent:
         )
 
     def synthesize(self, concept: PlannedConcept, language: str) -> ConceptDraft:
+        """Synthesize and validate one planned Concept using only indexed evidence."""
+
         source_contract = [
             {"id": source.id, "pages": f"1-{len(source.evidence)}"}
             for source in self._sources.values()

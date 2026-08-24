@@ -14,10 +14,14 @@ TOOL_MANAGED = {"generated", "sources", "verified"}
 
 
 def normalize_heading(value: str) -> str:
+    """Normalize heading text for stable structural block identifiers."""
+
     return re.sub(r"\s+", " ", value.strip()).casefold()
 
 
 def body_sections(body: str) -> dict[str, str]:
+    """Split Markdown into heading-path blocks while preserving their raw text."""
+
     matches = list(HEADING.finditer(body))
     sections: dict[str, str] = {}
     preamble = body[: matches[0].start()] if matches else body
@@ -38,10 +42,14 @@ def body_sections(body: str) -> dict[str, str]:
 
 
 def join_sections(sections: dict[str, str]) -> str:
+    """Reassemble structural Markdown blocks in mapping iteration order."""
+
     return "".join(sections.values()).strip() + "\n"
 
 
 def _merge_value(base: Any, human: Any, candidate: Any) -> tuple[Any, bool]:
+    """Apply three-way merge rules and report whether both sides changed a value."""
+
     if human == base:
         return candidate, False
     if candidate == base or human == candidate:
@@ -51,6 +59,8 @@ def _merge_value(base: Any, human: Any, candidate: Any) -> tuple[Any, bool]:
 
 @dataclass
 class MergeResult:
+    """Hold merged Markdown and the conflicts discovered during reconciliation."""
+
     markdown: str
     conflicts: list[Conflict]
     human_changed: bool
@@ -63,6 +73,13 @@ def merge_concept(
     candidate: str,
     evidence: list[Evidence] | None = None,
 ) -> MergeResult:
+    """Three-way merge Concept frontmatter and Markdown blocks.
+
+    Tool-managed frontmatter always comes from the candidate. Other values merge
+    when only one side changed; overlapping human and candidate edits remain human-
+    visible and are returned as conflicts with optional evidence.
+    """
+
     base_meta, base_body = parse_markdown(baseline)
     human_meta, human_body = parse_markdown(human)
     candidate_meta, candidate_body = parse_markdown(candidate)

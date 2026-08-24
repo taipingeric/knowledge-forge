@@ -1,17 +1,17 @@
 class KnowledgeForgeError(Exception):
-    """Expected user-facing failure."""
+    """Base exception for expected, user-facing Knowledge Forge failures."""
 
 
 class ValidationFailure(KnowledgeForgeError):
-    """Bundle, source, or state validation failed."""
+    """A Bundle, source, state, or model result failed a required constraint."""
 
 
 class SearchQueryFailure(ValidationFailure):
-    """A full-text query could not be parsed by the search index."""
+    """A full-text query could not be parsed by the temporary search index."""
 
 
 class ReconciliationRequired(KnowledgeForgeError):
-    """Human input is required before an update can be published."""
+    """Human input is required before an update can publish its candidate Bundle."""
 
     def __init__(self, report_path: str) -> None:
         self.report_path = report_path

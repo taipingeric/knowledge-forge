@@ -26,6 +26,8 @@ FENCED_CODE_BLOCK = re.compile(r"^```[^\n]*\n.*?^```[ \t]*$", re.DOTALL | re.MUL
 
 
 def parse_markdown(raw: str) -> tuple[dict[str, Any], str]:
+    """Parse YAML frontmatter and return it with the remaining Markdown body."""
+
     match = FRONTMATTER.match(raw)
     if not match:
         raise ValidationFailure("Concept must start with YAML frontmatter")
@@ -39,6 +41,8 @@ def parse_markdown(raw: str) -> tuple[dict[str, Any], str]:
 
 
 def dump_markdown(metadata: dict[str, Any], body: str) -> str:
+    """Serialize metadata and body as a canonical Knowledge Forge Markdown document."""
+
     frontmatter = yaml.safe_dump(
         metadata, sort_keys=False, allow_unicode=True, default_flow_style=False
     ).strip()
@@ -46,6 +50,8 @@ def dump_markdown(metadata: dict[str, Any], body: str) -> str:
 
 
 def compact_ranges(pages: list[int]) -> list[str]:
+    """Convert page numbers into sorted, compact one-based ranges."""
+
     numbers = sorted(set(pages))
     if not numbers:
         return []
@@ -62,6 +68,8 @@ def compact_ranges(pages: list[int]) -> list[str]:
 
 
 def expand_ranges(ranges: list[str]) -> list[int]:
+    """Expand validated page numbers and inclusive ranges into unique page numbers."""
+
     pages: list[int] = []
     for item in ranges:
         if re.fullmatch(r"[1-9][0-9]*", item):
@@ -82,6 +90,8 @@ def render_concept(
     actor: str,
     generated_at: datetime | None = None,
 ) -> str:
+    """Render a Concept draft with generated metadata and source page provenance."""
+
     source_entries: list[dict[str, Any]] = []
     for evidence in sorted(draft.evidence, key=lambda item: item.source_id):
         source = sources.get(evidence.source_id)
@@ -113,17 +123,23 @@ def render_concept(
 
 
 def managed_fields(metadata: dict[str, Any]) -> dict[str, Any]:
+    """Return frontmatter fields managed by Knowledge Forge rather than people."""
+
     return {
         key: metadata.get(key) for key in ("generated", "sources", "verified") if key in metadata
     }
 
 
 def managed_fields_hash(raw: str) -> str:
+    """Hash a Concept's tool-managed provenance fields for tamper detection."""
+
     metadata, _ = parse_markdown(raw)
     return sha256_text(yaml.safe_dump(managed_fields(metadata), sort_keys=True))
 
 
 def concept_version_hash(raw: str) -> str:
+    """Hash semantic Concept content while ignoring generated and verification metadata."""
+
     metadata, body = parse_markdown(raw)
     metadata.pop("verified", None)
     metadata.pop("generated", None)
@@ -131,10 +147,14 @@ def concept_version_hash(raw: str) -> str:
 
 
 def _non_empty_string(value: object) -> TypeGuard[str]:
+    """Return whether a value is a non-blank string suitable for OKF metadata."""
+
     return isinstance(value, str) and bool(value.strip())
 
 
 def _date_value(value: object) -> date | None:
+    """Parse a date-only OKF value, rejecting datetimes and malformed strings."""
+
     if isinstance(value, datetime):
         return None
     if isinstance(value, date):
@@ -148,6 +168,8 @@ def _date_value(value: object) -> date | None:
 
 
 def _datetime_value(value: object) -> datetime | None:
+    """Parse an ISO 8601 datetime and require timezone information."""
+
     if isinstance(value, datetime):
         parsed = value
     elif isinstance(value, str) and "T" in value.upper():
@@ -163,16 +185,22 @@ def _datetime_value(value: object) -> datetime | None:
 
 
 def _date_or_datetime_value(value: object) -> date | datetime | None:
+    """Parse either an OKF date or a timezone-aware ISO 8601 datetime."""
+
     return _date_value(value) or _datetime_value(value)
 
 
 def _temporal_key(value: date | datetime) -> datetime:
+    """Normalize an OKF date or datetime for chronological comparison."""
+
     if isinstance(value, datetime):
         return value
     return datetime.combine(value, datetime.min.time(), tzinfo=UTC)
 
 
 def _validate_actor(value: object, field: str) -> list[str]:
+    """Validate an actor identifier and return field-specific errors."""
+
     if not _non_empty_string(value):
         return [f"{field} must be a non-empty actor string"]
     if not ACTOR.fullmatch(value):
@@ -184,6 +212,8 @@ def _validate_actor(value: object, field: str) -> list[str]:
 
 
 def _validate_usage_window(value: object, field: str) -> list[str]:
+    """Validate an inclusive date or datetime interval in OKF metadata."""
+
     if not isinstance(value, dict):
         return [f"{field} must be a mapping with from and to dates or datetimes"]
     errors: list[str] = []
@@ -199,6 +229,8 @@ def _validate_usage_window(value: object, field: str) -> list[str]:
 
 
 def _validate_portable_sources(metadata: dict[str, Any], body: str) -> list[str]:
+    """Validate portable source metadata and ensure citations name declared sources."""
+
     errors: list[str] = []
     shared_window = metadata.get("usage_window")
     if "usage_window" in metadata:
@@ -261,6 +293,8 @@ def _validate_portable_sources(metadata: dict[str, Any], body: str) -> list[str]
 
 
 def _validate_portable_trust(metadata: dict[str, Any]) -> list[str]:
+    """Validate portable generated and verified attribution metadata."""
+
     errors: list[str] = []
     generated = metadata.get("generated")
     if generated is not None:
@@ -289,6 +323,8 @@ def _validate_portable_trust(metadata: dict[str, Any]) -> list[str]:
 
 
 def _validate_attested_computation(metadata: dict[str, Any]) -> list[str]:
+    """Validate metadata required to describe an OKF Attested Computation."""
+
     if metadata.get("type") != "Attested Computation":
         return []
     errors: list[str] = []
@@ -342,6 +378,8 @@ def _validate_attested_computation(metadata: dict[str, Any]) -> list[str]:
 
 
 def _validate_computation_representation(metadata: dict[str, Any], body: str) -> list[str]:
+    """Ensure an Attested Computation uses exactly one computation representation."""
+
     if metadata.get("type") != "Attested Computation":
         return []
     heading = re.search(r"^# Computation[ \t]*$", body, re.MULTILINE)
@@ -359,7 +397,11 @@ def _validate_computation_representation(metadata: dict[str, Any], body: str) ->
 
 
 def validate_portable_concept(raw: str, concept_id: str) -> list[str]:
-    """Validate an OKF v0.2 Concept without applying a producer profile."""
+    """Validate an OKF v0.2 Concept without applying a producer profile.
+
+    Return all validation messages prefixed with the supplied Concept ID instead of
+    raising, so callers can report errors across an entire Bundle at once.
+    """
     try:
         metadata, body = parse_markdown(raw)
     except ValidationFailure as exc:
