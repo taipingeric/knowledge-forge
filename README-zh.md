@@ -10,6 +10,8 @@ Knowledge Forge 將團隊核准的 PDF 文件整理成符合 Google Open Knowled
 
 Input Corpus 可包含 PDF 與一般、非空的 UTF-8 Markdown 文件。一般 Markdown 是 opaque untrusted evidence：frontmatter、HTML、comments 與 body text 都會被索引，但不會執行 includes、抓取 URL、追蹤 links 或讀取 linked images。Markdown evidence 使用 durable heading path、same-level occurrence 與 content hash；顯示的 line ranges 僅供診斷。標示為 OKF import root 的目錄會明確以 not-yet-supported 拒絕，不會被悄悄當作一般 evidence。
 
+已辨識的 OKF 0.2 Bundle 會在沒有 model configuration 或 reasoning 的情況下匯入。其 Concept Documents 會保留精確的 UTF-8 Markdown bytes、identity、language、type、extension、provenance、citation、link 與 image syntax；Knowledge Forge 絕不翻譯或修改 imported content。
+
 ## MVP 範圍
 
 - 輸入：指定目錄內遞迴發現、具有完整文字層的 PDF。
