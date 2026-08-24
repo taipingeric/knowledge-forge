@@ -11,7 +11,7 @@ from pathlib import Path
 import yaml
 
 from .agent import ReasoningAgent
-from .errors import ReconciliationRequired, ValidationFailure
+from .errors import ReconciliationRequired, StalenessDetected, ValidationFailure
 from .merge import body_sections, join_sections, merge_concept
 from .migrations import migrate_bundle, migration_available
 from .models import (
@@ -37,6 +37,7 @@ from .okf import (
 from .publish import output_lock, publish_staging, staged_bundle
 from .security import generation_identity, reject_tracing, resolve_disjoint_trees
 from .sources import EvidenceIndex, extract_sources, sha256_text, source_set_hash
+from .staleness import detect_staleness, write_staleness_report
 from .state import (
     baseline_path,
     bundle_hash,
@@ -501,6 +502,28 @@ def _update_locked(
         parallel_tool_calls=parallel_tool_calls,
         concept_concurrency=state.generation.concept_concurrency,
     )
+    stale_concepts = detect_staleness(output, state, sources)
+    planning_stale = source_set_hash(sources) != state.source_set_hash
+    generation_stale = (
+        sorted(
+            concept_id
+            for concept_id, concept_state in state.concepts.items()
+            if concept_state.ownership == "agent" and not concept_state.deleted
+        )
+        if not _same_generation_request(identity, state.generation)
+        else []
+    )
+    if stale_concepts or planning_stale or generation_stale:
+        raise StalenessDetected(
+            str(
+                write_staleness_report(
+                    output,
+                    stale_concepts,
+                    planning_stale=planning_stale,
+                    generation_stale=generation_stale,
+                )
+            )
+        )
     report("Evaluating deterministic no-change conditions...")
     with processing_phase(timing, "No-change evaluation"):
         current = public_concepts(output)

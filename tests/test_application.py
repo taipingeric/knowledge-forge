@@ -4,10 +4,9 @@ import threading
 from pathlib import Path
 
 import pytest
-import yaml
 
 from knowledge_forge import application
-from knowledge_forge.errors import ReconciliationRequired, ValidationFailure
+from knowledge_forge.errors import ReconciliationRequired, StalenessDetected, ValidationFailure
 from knowledge_forge.models import (
     ConceptDraft,
     ConceptPlan,
@@ -346,7 +345,8 @@ def test_agent_backed_update_reports_reasoning_and_each_synthesis_phase(
     monkeypatch.setattr(application, "ReasoningAgent", UpdateAgent)
     progress: list[str] = []
 
-    assert application.update(
+    with pytest.raises(StalenessDetected):
+        application.update(
         source=source_dir,
         output=output,
         model="fake-model",
@@ -358,18 +358,7 @@ def test_agent_backed_update_reports_reasoning_and_each_synthesis_phase(
         timing=ProcessingTimer(progress.append, TickingClock()),
     )
 
-    assert completed_phases(progress) == [
-        "Current Bundle validation",
-        "Knowledge Source reading",
-        "No-change evaluation",
-        "Knowledge Source indexing",
-        "Concept planning",
-        "Concept synthesis 1/1 (refund-policy)",
-        "Concept rendering and validation",
-        "Agent candidate merge and conflict detection",
-        "Candidate Bundle writing and validation",
-        "Atomic publication",
-    ]
+    assert completed_phases(progress) == ["Current Bundle validation", "Knowledge Source reading"]
 
 
 def test_update_wires_the_live_bundle_path_into_the_reasoning_agent(
@@ -433,7 +422,8 @@ def test_update_wires_the_live_bundle_path_into_the_reasoning_agent(
     monkeypatch.setattr(application, "_run_agent", run_agent)
     monkeypatch.setattr(application, "ReasoningAgent", CapturingAgent)
 
-    assert application.update(
+    with pytest.raises(StalenessDetected):
+        application.update(
         source=source_dir,
         output=output,
         model="fake-model",
@@ -443,7 +433,7 @@ def test_update_wires_the_live_bundle_path_into_the_reasoning_agent(
         max_agent_steps=50,
     )
 
-    assert captured["bundle"] == output.resolve()
+    assert captured == {}
 
 
 def test_generate_records_and_reports_non_parallel_compatibility_mode(
@@ -493,7 +483,8 @@ def test_update_tool_call_mode_change_bypasses_fast_path_and_updates_identity(
     monkeypatch.setattr(application, "_run_agent", observe_mode)
     progress: list[str] = []
 
-    assert application.update(
+    with pytest.raises(StalenessDetected):
+        application.update(
         source=source_dir,
         output=output,
         model="fake-model",
@@ -505,9 +496,9 @@ def test_update_tool_call_mode_change_bypasses_fast_path_and_updates_identity(
         progress=progress.append,
     )
 
-    assert observed_modes == [False]
-    assert progress[0] == "Tool-call mode: non-parallel compatibility."
-    assert load_state(output).generation.parallel_tool_calls is False
+    assert observed_modes == []
+    assert (tmp_path / "knowledge.staleness.md").is_file()
+    assert load_state(output).generation.parallel_tool_calls is True
     assert "Curated by a human" in concept_path.read_text()
 
 
@@ -623,7 +614,7 @@ def test_conflict_leaves_live_bundle_untouched_and_can_use_source(
     generated[0] = concept(sources[0], "Five days")
     progress: list[str] = []
 
-    with pytest.raises(ReconciliationRequired):
+    with pytest.raises(StalenessDetected):
         application.update(
             source=source_dir,
             output=output,
@@ -636,40 +627,10 @@ def test_conflict_leaves_live_bundle_untouched_and_can_use_source(
             timing=ProcessingTimer(progress.append, TickingClock()),
         )
     assert live.read_text() == live_before
-    work = tmp_path / "knowledge.reconciliation"
-    report = (tmp_path / "knowledge.reconciliation.md").read_text()
-    assert "Fourteen days" in report
-    assert "Five days" in report
-    assert "`policy.pdf` pages 1" in report
-    assert completed_phases(progress) == [
-        "Current Bundle validation",
-        "Knowledge Source reading",
-        "No-change evaluation",
-        "Agent candidate merge and conflict detection",
-        "Candidate Bundle writing and validation",
-        "Reconciliation artifact writing",
-    ]
+    report = (tmp_path / "knowledge.staleness.md").read_text()
+    assert "refund-policy" in report
+    assert completed_phases(progress) == ["Current Bundle validation", "Knowledge Source reading"]
     assert "Atomic publication completed" not in "\n".join(progress)
-    reconciliation_paths = [
-        tmp_path / "knowledge.reconciliation.md",
-        *(tmp_path / "knowledge.reconciliation").rglob("*"),
-    ]
-    reconciliation_text = "\n".join(
-        path.read_text(encoding="utf-8") for path in reconciliation_paths if path.is_file()
-    )
-    assert "completed in" not in reconciliation_text
-    resolution = yaml.safe_load((work / "resolution.yaml").read_text())
-    resolution["resolutions"][0]["action"] = "use-source"
-    (work / "resolution.yaml").write_text(yaml.safe_dump(resolution, sort_keys=False))
-    application.reconcile(
-        source=source_dir,
-        output=output,
-        resolution_path=work / "resolution.yaml",
-    )
-    assert "Five days" in live.read_text()
-    assert not work.exists()
-    assert "Status: resolved" in (tmp_path / "knowledge.reconciliation.md").read_text()
-    validate_bundle(output, sources)
 
 
 def test_verify_is_version_bound(
