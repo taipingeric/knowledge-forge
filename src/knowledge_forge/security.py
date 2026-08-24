@@ -15,6 +15,8 @@ TRACING_VARIABLES = (
 
 
 def resolve_disjoint_trees(source: Path, output: Path) -> tuple[Path, Path]:
+    """Resolve paths and reject equal or nested source/output directory trees."""
+
     source = source.resolve()
     output = output.resolve()
     if source == output or source in output.parents or output in source.parents:
@@ -26,6 +28,8 @@ def resolve_disjoint_trees(source: Path, output: Path) -> tuple[Path, Path]:
 
 
 def reject_tracing() -> None:
+    """Fail when third-party tracing could transmit untrusted source content."""
+
     enabled = [
         name
         for name in TRACING_VARIABLES
@@ -39,6 +43,8 @@ def reject_tracing() -> None:
 
 
 def endpoint_identity(base_url: str | None) -> str:
+    """Validate and canonicalize an OpenAI-compatible endpoint without credentials."""
+
     value = base_url or "https://api.openai.com/v1"
     parsed = urlsplit(value)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
@@ -58,6 +64,8 @@ def generation_identity(
     parallel_tool_calls: bool,
     concept_concurrency: int,
 ) -> GenerationIdentity:
+    """Validate generation controls and return the identity stored with a Bundle."""
+
     if not model.strip():
         raise ValidationFailure("Model must be set with --model or OPENAI_MODEL")
     if not language.strip():

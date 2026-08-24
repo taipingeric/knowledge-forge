@@ -18,10 +18,14 @@ from .state import bundle_hash, load_baseline, load_state, public_concepts
 
 
 def _file_hash(path: Path) -> str:
+    """Hash a UTF-8 tool-managed file for consistency checks."""
+
     return sha256_text(path.read_text(encoding="utf-8"))
 
 
 def _read_portable_markdown(path: Path, relative: str) -> tuple[str | None, list[str]]:
+    """Read UTF-8 Markdown and return a portable validation error instead of raising."""
+
     try:
         return path.read_text(encoding="utf-8"), []
     except (OSError, UnicodeError) as exc:
@@ -29,6 +33,8 @@ def _read_portable_markdown(path: Path, relative: str) -> tuple[str | None, list
 
 
 def _validate_root_index(path: Path) -> list[str]:
+    """Validate an optional root index's restricted OKF version frontmatter."""
+
     if not path.is_file():
         return []
     raw, errors = _read_portable_markdown(path, "index.md")
@@ -51,6 +57,8 @@ def _validate_root_index(path: Path) -> list[str]:
 
 
 def _has_frontmatter_block(raw: str) -> bool:
+    """Detect a complete YAML frontmatter block in reserved Markdown content."""
+
     lines = raw.removeprefix("\ufeff").splitlines()
     if not lines or lines[0].strip() != "---":
         return False
@@ -58,6 +66,8 @@ def _has_frontmatter_block(raw: str) -> bool:
 
 
 def _validate_reserved_file(path: Path, relative: str) -> list[str]:
+    """Validate reserved index/log files without treating them as Concept Documents."""
+
     raw, errors = _read_portable_markdown(path, relative)
     if raw is None:
         return errors
@@ -110,6 +120,8 @@ def validate_bundle(
     check_live_hash: bool = False,
     for_mutation: bool = False,
 ) -> ForgeState:
+    """Validate a managed Bundle's public files, private state, sources, and hashes."""
+
     errors: list[str] = []
     try:
         state = load_state(bundle)

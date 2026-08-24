@@ -24,18 +24,26 @@ from .models import (
 
 
 def sha256_bytes(value: bytes) -> str:
+    """Return the lowercase SHA-256 digest of raw source bytes."""
+
     return hashlib.sha256(value).hexdigest()
 
 
 def sha256_text(value: str) -> str:
+    """Return the SHA-256 digest of UTF-8 encoded text."""
+
     return sha256_bytes(value.encode("utf-8"))
 
 
 def logical_resource(source_id: str, kind: str = "pdf") -> str:
+    """Build the stable logical resource URI for a source-root-relative identity."""
+
     return f"urn:knowledge-forge:{kind}:{quote(source_id, safe='')}"
 
 
 def discover_pdfs(root: Path) -> list[Path]:
+    """Discover PDFs while rejecting symlinks, collisions, and unsafe identities."""
+
     root = root.resolve()
     if not root.is_dir():
         raise ValidationFailure(f"Source directory does not exist: {root}")
@@ -67,6 +75,8 @@ def discover_pdfs(root: Path) -> list[Path]:
 
 
 def extract_sources(root: Path) -> list[KnowledgeSource]:
+    """Extract every supported source, failing atomically if any file is invalid."""
+
     root = root.resolve()
     failures: list[str] = []
     sources: list[KnowledgeSource] = []
@@ -120,6 +130,8 @@ def extract_sources(root: Path) -> list[KnowledgeSource]:
 
 
 def _discover_source_files(root: Path) -> list[Path]:
+    """Discover supported PDF and Markdown sources with normalized identity checks."""
+
     if not root.is_dir():
         raise ValidationFailure(f"Source directory does not exist: {root}")
     found: list[Path] = []
@@ -143,6 +155,8 @@ def _discover_source_files(root: Path) -> list[Path]:
 
 
 def _marked_okf_roots(root: Path, paths: list[Path]) -> set[Path]:
+    """Find recognized portable OKF roots that must not be imported recursively."""
+
     roots: set[Path] = set()
     for path in paths:
         if path.name != "index.md":
@@ -157,6 +171,8 @@ def _marked_okf_roots(root: Path, paths: list[Path]) -> set[Path]:
 
 
 def _markdown_evidence(text: str) -> list[EvidenceUnit]:
+    """Split ordinary Markdown into durable heading blocks and line hints."""
+
     lines = text.splitlines(keepends=True)
     headings: list[tuple[int, int, str]] = []
     fenced = False
@@ -203,6 +219,8 @@ def _markdown_evidence(text: str) -> list[EvidenceUnit]:
 
 
 def source_set_hash(sources: list[KnowledgeSource]) -> str:
+    """Hash source identities and content digests in authoritative order."""
+
     material = "\n".join(f"{item.id}\0{item.content_sha256}" for item in sources)
     return sha256_text(material)
 
@@ -223,6 +241,8 @@ class EvidenceIndex:
         return sqlite3.connect(self._database)
 
     def add(self, sources: list[KnowledgeSource]) -> None:
+        """Index typed evidence locators and text in the ephemeral SQLite FTS table."""
+
         with self._connect() as connection:
             connection.executemany(
                 "INSERT INTO evidence(source_id, locator, text) VALUES (?, ?, ?)",
@@ -242,6 +262,8 @@ class EvidenceIndex:
             )
 
     def search(self, query: str, limit: int = 10) -> list[dict[str, object]]:
+        """Search evidence text and return bounded snippets with typed locators."""
+
         limit = min(max(limit, 1), 25)
         try:
             with self._connect() as connection:
@@ -259,6 +281,8 @@ class EvidenceIndex:
     def read(
         self, source_id: str, locators: list[EvidenceLocator | int]
     ) -> list[dict[str, object]]:
+        """Read selected evidence for one source, accepting PDF page compatibility values."""
+
         if not locators:
             return []
         typed_locators = [
@@ -294,6 +318,8 @@ class PageIndex(EvidenceIndex):
     """Compatibility view of the typed evidence index for PDF page tools."""
 
     def search(self, query: str, limit: int = 10) -> list[dict[str, object]]:
+        """Return typed-index search results in the legacy page-shaped format."""
+
         return [
             {
                 "source_id": item["source_id"],
@@ -304,6 +330,8 @@ class PageIndex(EvidenceIndex):
         ]
 
     def read(self, source_id: str, pages: list[int | PDFPageLocator]) -> list[dict[str, object]]:
+        """Read PDF pages through the compatibility interface used by older tools."""
+
         rows = super().read(source_id, pages)
         return [
             {"source_id": item["source_id"], "page": item["locator"]["page"], "text": item["text"]}
