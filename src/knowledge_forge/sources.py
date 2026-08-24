@@ -281,7 +281,7 @@ class EvidenceIndex:
     def read(
         self, source_id: str, locators: list[EvidenceLocator | int]
     ) -> list[dict[str, object]]:
-        """Read selected evidence for one source, accepting PDF page compatibility values."""
+        """Read selected evidence, accepting legacy PDF-source locator values."""
 
         if not locators:
             return []
@@ -315,7 +315,7 @@ class EvidenceIndex:
 
 
 class PageIndex(EvidenceIndex):
-    """Compatibility view of the typed evidence index for PDF page tools."""
+    """Compatibility view of the typed evidence index for legacy page tools."""
 
     def search(self, query: str, limit: int = 10) -> list[dict[str, object]]:
         """Return typed-index search results in the legacy page-shaped format."""
@@ -330,7 +330,7 @@ class PageIndex(EvidenceIndex):
         ]
 
     def read(self, source_id: str, pages: list[int | PDFPageLocator]) -> list[dict[str, object]]:
-        """Read PDF pages through the compatibility interface used by older tools."""
+        """Read legacy page locators through the compatibility interface for older tools."""
 
         rows = super().read(source_id, pages)
         return [
