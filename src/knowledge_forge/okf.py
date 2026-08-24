@@ -145,11 +145,13 @@ def render_concept(
         for locator in locators:
             if json.dumps(locator.model_dump(mode="json"), sort_keys=True) not in known:
                 raise ValidationFailure(f"Unknown evidence locator in concept {draft.slug}")
+            evidence_unit = next(unit for unit in source.evidence if unit.locator == locator)
             source_entries.append(
                 {
                     "id": source_reference_id(source.source_identity, locator),
                     "resource": source.resource,
                     "content_sha256": source.content_sha256,
+                    "evidence_sha256": sha256_text(evidence_unit.text),
                     "locator": locator.model_dump(mode="json"),
                     "locator_sha256": sha256_text(
                         json.dumps(
