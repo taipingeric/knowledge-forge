@@ -8,7 +8,7 @@ from langgraph.graph import END, START, StateGraph
 
 from .agent import ReasoningAgent
 from .errors import ValidationFailure
-from .models import ConceptDraft, ConceptPlan, PDFSource
+from .models import ConceptDraft, ConceptPlan, KnowledgeSource
 from .okf import render_concept, validate_concept
 from .timing import ProcessingTimer, ProgressReporter, processing_phase
 
@@ -23,7 +23,7 @@ class WorkflowState(TypedDict, total=False):
 
 def build_workflow(
     agent_factory: Callable[[], ReasoningAgent],
-    sources: list[PDFSource],
+    sources: list[KnowledgeSource],
     actor: str,
     concept_concurrency: int = 1,
     progress: Callable[[str], None] | None = None,
@@ -98,7 +98,7 @@ def build_workflow(
         def render_valid_concepts() -> dict[str, str]:
             concepts: dict[str, str] = {}
             errors: list[str] = []
-            page_counts = {source.id: len(source.pages) for source in sources}
+            page_counts = {source.id: len(source.evidence) for source in sources}
             for draft in state["drafts"]:
                 concept_id = f"concepts/{draft.slug}"
                 raw = render_concept(draft, source_map, actor)

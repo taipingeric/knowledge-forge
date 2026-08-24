@@ -5,7 +5,7 @@ from datetime import date
 from pathlib import Path
 
 from .errors import ValidationFailure
-from .models import ForgeState, PDFSource
+from .models import ForgeState, KnowledgeSource
 from .okf import (
     managed_fields_hash,
     parse_markdown,
@@ -105,7 +105,7 @@ def validate_portable_bundle(bundle: Path) -> None:
 
 def validate_bundle(
     bundle: Path,
-    sources: list[PDFSource] | None = None,
+    sources: list[KnowledgeSource] | None = None,
     *,
     check_live_hash: bool = False,
     for_mutation: bool = False,
@@ -116,7 +116,7 @@ def validate_bundle(
     except ValidationFailure as exc:
         raise ValidationFailure(str(exc)) from exc
     concepts = public_concepts(bundle)
-    source_pages = None if sources is None else {item.id: len(item.pages) for item in sources}
+    source_pages = None if sources is None else {item.id: len(item.evidence) for item in sources}
 
     allowed_markdown = {"index.md", "log.md"} | {f"{concept_id}.md" for concept_id in concepts}
     for path in bundle.rglob("*.md"):
@@ -179,7 +179,7 @@ def validate_bundle(
             expected = state.sources.get(source.id)
             if expected and (
                 expected.content_sha256 != source.content_sha256
-                or expected.page_count != len(source.pages)
+                or expected.page_count != len(source.evidence)
             ):
                 errors.append(f"Source hash or page count differs: {source.id}")
 

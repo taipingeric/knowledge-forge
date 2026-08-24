@@ -1,13 +1,44 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 WORKFLOW_VERSION = "3"
 STATE_VERSION = 1
 CONCEPT_TYPES = ("Concept", "Definition", "Policy", "Procedure", "FAQ")
+
+
+class SourceKind(StrEnum):
+    PDF = "pdf"
+
+
+class PDFPageLocator(BaseModel):
+    kind: Literal["pdf_page"] = "pdf_page"
+    page: int = Field(ge=1)
+
+
+EvidenceLocator = PDFPageLocator
+
+
+class EvidenceUnit(BaseModel):
+    locator: EvidenceLocator
+    text: str
+
+
+class KnowledgeSource(BaseModel):
+    kind: SourceKind
+    id: str
+    resource: str
+    content_sha256: str
+    evidence: list[EvidenceUnit]
+
+    @property
+    def source_identity(self) -> str:
+        """Return the stable source-root-relative identity."""
+        return self.id
 
 
 class SourcePage(BaseModel):
@@ -15,11 +46,21 @@ class SourcePage(BaseModel):
     text: str
 
 
-class PDFSource(BaseModel):
-    id: str
-    resource: str
-    content_sha256: str
+PDFPage = SourcePage
+
+
+class PDFSource(KnowledgeSource):
+    kind: Literal[SourceKind.PDF] = SourceKind.PDF
     pages: list[SourcePage]
+    evidence: list[EvidenceUnit] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def derive_evidence(self) -> PDFSource:
+        self.evidence = [
+            EvidenceUnit(locator=PDFPageLocator(page=page.number), text=page.text)
+            for page in self.pages
+        ]
+        return self
 
 
 class Evidence(BaseModel):

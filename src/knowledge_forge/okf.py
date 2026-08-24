@@ -9,7 +9,7 @@ from urllib.parse import quote
 import yaml
 
 from .errors import ValidationFailure
-from .models import CONCEPT_TYPES, ConceptDraft, PDFSource
+from .models import CONCEPT_TYPES, ConceptDraft, KnowledgeSource
 from .sources import sha256_text
 
 FRONTMATTER = re.compile(
@@ -78,7 +78,7 @@ def expand_ranges(ranges: list[str]) -> list[int]:
 
 def render_concept(
     draft: ConceptDraft,
-    sources: dict[str, PDFSource],
+    sources: dict[str, KnowledgeSource],
     actor: str,
     generated_at: datetime | None = None,
 ) -> str:
@@ -87,7 +87,7 @@ def render_concept(
         source = sources.get(evidence.source_id)
         if source is None:
             raise ValidationFailure(f"Unknown source in concept {draft.slug}: {evidence.source_id}")
-        if max(evidence.pages) > len(source.pages):
+        if max(evidence.pages) > len(source.evidence):
             raise ValidationFailure(f"Page outside source bounds in concept {draft.slug}")
         source_entries.append(
             {

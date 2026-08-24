@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 import unicodedata
 from pathlib import Path
@@ -9,7 +10,7 @@ from urllib.parse import quote
 from pypdf import PdfReader
 
 from .errors import SearchQueryFailure, ValidationFailure
-from .models import PDFSource, SourcePage
+from .models import EvidenceLocator, KnowledgeSource, PDFPageLocator, PDFSource, SourcePage
 
 
 def sha256_bytes(value: bytes) -> str:
@@ -20,8 +21,8 @@ def sha256_text(value: str) -> str:
     return sha256_bytes(value.encode("utf-8"))
 
 
-def logical_resource(source_id: str) -> str:
-    return f"urn:knowledge-forge:pdf:{quote(source_id, safe='')}"
+def logical_resource(source_id: str, kind: str = "pdf") -> str:
+    return f"urn:knowledge-forge:{kind}:{quote(source_id, safe='')}"
 
 
 def discover_pdfs(root: Path) -> list[Path]:
@@ -55,10 +56,10 @@ def discover_pdfs(root: Path) -> list[Path]:
     return found
 
 
-def extract_sources(root: Path) -> list[PDFSource]:
+def extract_sources(root: Path) -> list[KnowledgeSource]:
     root = root.resolve()
     failures: list[str] = []
-    sources: list[PDFSource] = []
+    sources: list[KnowledgeSource] = []
     for path in discover_pdfs(root):
         source_id = unicodedata.normalize("NFC", path.relative_to(root).as_posix())
         try:
@@ -87,33 +88,42 @@ def extract_sources(root: Path) -> list[PDFSource]:
     return sources
 
 
-def source_set_hash(sources: list[PDFSource]) -> str:
+def source_set_hash(sources: list[KnowledgeSource]) -> str:
     material = "\n".join(f"{item.id}\0{item.content_sha256}" for item in sources)
     return sha256_text(material)
 
 
-class PageIndex:
-    """Ephemeral page-oriented full-text index."""
+class EvidenceIndex:
+    """Ephemeral full-text index for typed Knowledge Source evidence."""
 
     def __init__(self, database: Path) -> None:
         self._database = database
         with self._connect() as connection:
             connection.execute(
-                "CREATE VIRTUAL TABLE pages USING fts5(source_id UNINDEXED, page UNINDEXED, text)"
+                "CREATE VIRTUAL TABLE evidence USING fts5("
+                "source_id UNINDEXED, locator UNINDEXED, text)"
             )
 
     def _connect(self) -> sqlite3.Connection:
         """Create a connection owned by the calling thread."""
         return sqlite3.connect(self._database)
 
-    def add(self, sources: list[PDFSource]) -> None:
+    def add(self, sources: list[KnowledgeSource]) -> None:
         with self._connect() as connection:
             connection.executemany(
-                "INSERT INTO pages(source_id, page, text) VALUES (?, ?, ?)",
+                "INSERT INTO evidence(source_id, locator, text) VALUES (?, ?, ?)",
                 [
-                    (source.id, page.number, page.text)
+                    (
+                        source.id,
+                        json.dumps(
+                            unit.locator.model_dump(mode="json"),
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ),
+                        unit.text,
+                    )
                     for source in sources
-                    for page in source.pages
+                    for unit in source.evidence
                 ],
             )
 
@@ -122,31 +132,66 @@ class PageIndex:
         try:
             with self._connect() as connection:
                 rows = connection.execute(
-                    "SELECT source_id, page, snippet(pages, 2, '[', ']', ' … ', 32) "
-                    "FROM pages WHERE pages MATCH ? ORDER BY rank LIMIT ?",
+                    "SELECT source_id, locator, snippet(evidence, 2, '[', ']', ' … ', 32) "
+                    "FROM evidence WHERE evidence MATCH ? ORDER BY rank LIMIT ?",
                     (query, limit),
                 ).fetchall()
         except sqlite3.OperationalError as exc:
             raise SearchQueryFailure(f"Invalid full-text search query: {query!r}") from exc
-        return [{"source_id": row[0], "page": int(row[1]), "snippet": row[2]} for row in rows]
+        return [
+            {"source_id": row[0], "locator": json.loads(row[1]), "snippet": row[2]} for row in rows
+        ]
 
-    def read(self, source_id: str, pages: list[int]) -> list[dict[str, object]]:
-        if not pages:
+    def read(
+        self, source_id: str, locators: list[EvidenceLocator | int]
+    ) -> list[dict[str, object]]:
+        if not locators:
             return []
-        placeholders = ",".join("?" for _ in pages)
+        typed_locators = [
+            locator if isinstance(locator, PDFPageLocator) else PDFPageLocator(page=locator)
+            for locator in locators
+        ]
+        serialized = [
+            json.dumps(locator.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+            for locator in typed_locators
+        ]
+        placeholders = ",".join("?" for _ in serialized)
         with self._connect() as connection:
             rows = connection.execute(
-                f"SELECT source_id, page, text FROM pages "  # noqa: S608 - placeholders below
-                f"WHERE source_id = ? AND page IN ({placeholders}) ORDER BY page",
-                (source_id, *pages),
+                f"SELECT source_id, locator, text FROM evidence "  # noqa: S608 - placeholders below
+                f"WHERE source_id = ? AND locator IN ({placeholders}) ORDER BY locator",
+                (source_id, *serialized),
             ).fetchall()
-        return [{"source_id": row[0], "page": int(row[1]), "text": row[2]} for row in rows]
+        return [
+            {"source_id": row[0], "locator": json.loads(row[1]), "text": row[2]} for row in rows
+        ]
 
     def close(self) -> None:
         """Retained for the context-manager API; connections are operation-scoped."""
 
-    def __enter__(self) -> PageIndex:
+    def __enter__(self) -> EvidenceIndex:
         return self
 
     def __exit__(self, *_: object) -> None:
         self.close()
+
+
+class PageIndex(EvidenceIndex):
+    """Compatibility view of the typed evidence index for PDF page tools."""
+
+    def search(self, query: str, limit: int = 10) -> list[dict[str, object]]:
+        return [
+            {
+                "source_id": item["source_id"],
+                "page": item["locator"]["page"],
+                "snippet": item["snippet"],
+            }
+            for item in super().search(query, limit)
+        ]
+
+    def read(self, source_id: str, pages: list[int | PDFPageLocator]) -> list[dict[str, object]]:
+        rows = super().read(source_id, pages)
+        return [
+            {"source_id": item["source_id"], "page": item["locator"]["page"], "text": item["text"]}
+            for item in rows
+        ]

@@ -17,9 +17,9 @@ from openai import APIError
 from pydantic import BaseModel
 
 from .errors import SearchQueryFailure, ValidationFailure
-from .models import ConceptDraft, ConceptPlan, PDFSource, PlannedConcept
+from .models import ConceptDraft, ConceptPlan, KnowledgeSource, PlannedConcept
 from .okf import render_concept, validate_concept
-from .sources import PageIndex
+from .sources import EvidenceIndex
 from .tools import build_read_pages_tool, build_search_knowledge_tool, build_search_pages_tool
 
 ResultT = TypeVar("ResultT", bound=BaseModel)
@@ -100,8 +100,8 @@ class ReasoningAgent:
     def __init__(
         self,
         *,
-        index: PageIndex,
-        sources: list[PDFSource],
+        index: EvidenceIndex,
+        sources: list[KnowledgeSource],
         model: str,
         api_key: str,
         base_url: str | None,
@@ -199,7 +199,7 @@ class ReasoningAgent:
 
     def plan(self, language: str, existing_ids: list[str]) -> ConceptPlan:
         manifest = [
-            {"id": source.id, "sha256": source.content_sha256, "pages": len(source.pages)}
+            {"id": source.id, "sha256": source.content_sha256, "pages": len(source.evidence)}
             for source in self._sources.values()
         ]
 
@@ -226,7 +226,7 @@ class ReasoningAgent:
 
     def synthesize(self, concept: PlannedConcept, language: str) -> ConceptDraft:
         source_contract = [
-            {"id": source.id, "pages": f"1-{len(source.pages)}"}
+            {"id": source.id, "pages": f"1-{len(source.evidence)}"}
             for source in self._sources.values()
         ]
         valid_source_ids = sorted(self._sources)
@@ -243,12 +243,12 @@ class ReasoningAgent:
                         f"unknown source ID {evidence.source_id!r}; valid source IDs are "
                         f"{valid_source_ids!r}. Placeholder or sentinel source IDs are forbidden"
                     )
-                if max(evidence.pages) > len(source.pages):
+                if max(evidence.pages) > len(source.evidence):
                     raise ValueError(
-                        f"page outside {evidence.source_id!r} bounds ({len(source.pages)})"
+                        f"page outside {evidence.source_id!r} bounds ({len(source.evidence)})"
                     )
             source_pages = {
-                source_id: len(source.pages) for source_id, source in self._sources.items()
+                source_id: len(source.evidence) for source_id, source in self._sources.items()
             }
             rendered = render_concept(draft, self._sources, "knowledge-forge/validation")
             errors = validate_concept(rendered, f"concepts/{draft.slug}", source_pages)

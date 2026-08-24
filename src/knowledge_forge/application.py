@@ -19,7 +19,7 @@ from .models import (
     Conflict,
     ForgeState,
     GenerationIdentity,
-    PDFSource,
+    KnowledgeSource,
     ReconciliationManifest,
     ResolutionFile,
     SourceState,
@@ -34,7 +34,7 @@ from .okf import (
 )
 from .publish import output_lock, publish_staging, staged_bundle
 from .security import generation_identity, reject_tracing, resolve_disjoint_trees
-from .sources import PageIndex, extract_sources, sha256_text, source_set_hash
+from .sources import EvidenceIndex, extract_sources, sha256_text, source_set_hash
 from .state import (
     baseline_path,
     bundle_hash,
@@ -75,9 +75,11 @@ def _report_tool_call_mode(report: Callable[[str], None], parallel: bool) -> Non
     report(f"Tool-call mode: {mode}.")
 
 
-def _source_states(sources: list[PDFSource]) -> dict[str, SourceState]:
+def _source_states(sources: list[KnowledgeSource]) -> dict[str, SourceState]:
     return {
-        source.id: SourceState(content_sha256=source.content_sha256, page_count=len(source.pages))
+        source.id: SourceState(
+            content_sha256=source.content_sha256, page_count=len(source.evidence)
+        )
         for source in sources
     }
 
@@ -146,7 +148,7 @@ def _write_bundle(
     concepts: dict[str, str],
     baselines: dict[str, str],
     ownership: dict[str, str],
-    sources: list[PDFSource],
+    sources: list[KnowledgeSource],
     generation: GenerationIdentity,
     previous_state: ForgeState | None,
     action: str,
@@ -217,7 +219,7 @@ def _write_bundle(
 
 def _run_agent(
     *,
-    sources: list[PDFSource],
+    sources: list[KnowledgeSource],
     generation: GenerationIdentity,
     api_key: str,
     existing_ids: list[str],
@@ -230,10 +232,10 @@ def _run_agent(
     temporary = Path(tempfile.mkdtemp(prefix="knowledge-forge-fts-"))
     report = progress or (lambda _: None)
     try:
-        page_count = sum(len(source.pages) for source in sources)
+        page_count = sum(len(source.evidence) for source in sources)
         report(f"Indexing {page_count} pages from {len(sources)} PDFs...")
         with processing_phase(timing, "PDF indexing"):
-            index = PageIndex(temporary / "pages.sqlite")
+            index = EvidenceIndex(temporary / "pages.sqlite")
             try:
                 index.add(sources)
             except Exception:
@@ -322,7 +324,7 @@ def _generate_locked(
     report("Reading PDF sources...")
     with processing_phase(timing, "PDF Source reading"):
         sources = extract_sources(source)
-    report(f"Loaded {len(sources)} PDFs with {sum(len(item.pages) for item in sources)} pages.")
+    report(f"Loaded {len(sources)} PDFs with {sum(len(item.evidence) for item in sources)} pages.")
     concepts, output_language = _run_agent(
         sources=sources,
         generation=generation,
@@ -428,7 +430,7 @@ def _update_locked(
     report("Reading PDF sources...")
     with processing_phase(timing, "PDF Source reading"):
         sources = extract_sources(source)
-    report(f"Loaded {len(sources)} PDFs with {sum(len(item.pages) for item in sources)} pages.")
+    report(f"Loaded {len(sources)} PDFs with {sum(len(item.evidence) for item in sources)} pages.")
     identity = generation_identity(
         model=model,
         base_url=base_url,
@@ -623,7 +625,7 @@ def _write_reconciliation(
     output: Path,
     staging: Path,
     prior_state: ForgeState,
-    sources: list[PDFSource],
+    sources: list[KnowledgeSource],
     identity: GenerationIdentity,
     conflicts: list[Conflict],
 ) -> None:
