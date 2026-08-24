@@ -16,3 +16,11 @@ class ReconciliationRequired(KnowledgeForgeError):
     def __init__(self, report_path: str) -> None:
         self.report_path = report_path
         super().__init__(f"Reconciliation required: {report_path}")
+
+
+class StalenessDetected(KnowledgeForgeError):
+    """Referenced evidence changed and requires an explicit regeneration decision."""
+
+    def __init__(self, report_path: str) -> None:
+        self.report_path = report_path
+        super().__init__(f"Staleness detected: {report_path}")
