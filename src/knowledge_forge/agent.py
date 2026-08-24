@@ -218,6 +218,8 @@ class ReasoningAgent:
         ]
 
         def validate_plan(plan: ConceptPlan) -> None:
+            """Enforce the requested language and unique slugs in an agent plan."""
+
             if plan.language.casefold() == "auto":
                 raise ValueError("resolve auto to one concrete Bundle language")
             if language.casefold() != "auto" and plan.language != language:
@@ -257,6 +259,8 @@ class ReasoningAgent:
         valid_source_ids = sorted(self._sources)
 
         def validate_draft(draft: ConceptDraft) -> None:
+            """Enforce the planned identity and source bounds of a Concept draft."""
+
             if draft.slug != concept.slug:
                 raise ValueError(
                     f"keep the planned Concept slug {concept.slug!r}, not {draft.slug!r}"

@@ -52,7 +52,7 @@ class KnowledgeSource(BaseModel):
 
 
 class SourcePage(BaseModel):
-    """Store the extracted text of one one-based source page."""
+    """Store the extracted text of one one-based page from a PDF Source."""
 
     number: int = Field(ge=1)
     text: str
@@ -62,7 +62,7 @@ PDFPage = SourcePage
 
 
 class PDFSource(KnowledgeSource):
-    """Represent a PDF Source and its extracted pages and evidence units."""
+    """Represent a PDF Source, its extracted pages, and its evidence units."""
 
     kind: Literal[SourceKind.PDF] = SourceKind.PDF
     pages: list[SourcePage]
@@ -70,7 +70,7 @@ class PDFSource(KnowledgeSource):
 
     @model_validator(mode="after")
     def derive_evidence(self) -> PDFSource:
-        """Derive page-based evidence entries from the extracted PDF pages."""
+        """Derive page-based evidence entries from the extracted PDF Source."""
 
         self.evidence = [
             EvidenceUnit(locator=PDFPageLocator(page=page.number), text=page.text)

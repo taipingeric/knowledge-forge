@@ -39,9 +39,13 @@ def build_workflow(
     )
 
     def report(message: str) -> None:
+        """Send one workflow progress message through the configured reporter."""
+
         reporter.report(message)
 
     def plan(state: WorkflowState) -> dict[str, object]:
+        """Plan the Concepts and validate the requested output language."""
+
         report("Planning concepts with the reasoning agent...")
         with processing_phase(timing, "Concept planning"):
             try:
@@ -61,10 +65,14 @@ def build_workflow(
         return {"plan": result, "language": result.language}
 
     def synthesize(state: WorkflowState) -> dict[str, object]:
+        """Synthesize all planned Concepts with bounded concurrency."""
+
         planned = state["plan"].concepts
         total = len(planned)
 
         def synthesize_one(current: int) -> ConceptDraft:
+            """Synthesize one Concept and wrap failures with its Concept ID."""
+
             concept = planned[current - 1]
             report(f"Synthesizing concept {current}/{len(planned)}: {concept.slug}")
             with processing_phase(timing, f"Concept synthesis {current}/{total} ({concept.slug})"):
@@ -97,9 +105,13 @@ def build_workflow(
         return {"drafts": [drafts[current] for current in range(1, total + 1)]}
 
     def render_and_validate(state: WorkflowState) -> dict[str, object]:
+        """Render every draft and reject the workflow if any Concept is invalid."""
+
         report(f"Rendering and validating {len(state['drafts'])} concepts...")
 
         def render_valid_concepts() -> dict[str, str]:
+            """Render drafts in plan order and aggregate all validation errors."""
+
             concepts: dict[str, str] = {}
             errors: list[str] = []
             page_counts = {source.id: len(source.evidence) for source in sources}
