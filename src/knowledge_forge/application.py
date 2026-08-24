@@ -13,6 +13,7 @@ import yaml
 from .agent import ReasoningAgent
 from .errors import ReconciliationRequired, ValidationFailure
 from .merge import body_sections, join_sections, merge_concept
+from .migrations import migrate_bundle, migration_available
 from .models import (
     ConceptState,
     ConditionalOverride,
@@ -455,6 +456,23 @@ def _update_locked(
     progress: Callable[[str], None] | None = None,
     timing: ProcessingTimer | None = None,
 ) -> bool:
+    if migration_available(output):
+        with staged_bundle(output, copy_existing=True) as staging:
+            migrate_bundle(staging)
+            changed = _update_locked(
+                source=source,
+                output=staging,
+                model=model,
+                api_key=api_key,
+                base_url=base_url,
+                language=language,
+                max_agent_steps=max_agent_steps,
+                parallel_tool_calls=parallel_tool_calls,
+                progress=progress,
+                timing=timing,
+            )
+            publish_staging(staging, output)
+            return changed
     report = progress or (lambda _: None)
     output = output.resolve()
     _report_tool_call_mode(report, parallel_tool_calls)
@@ -926,6 +944,12 @@ def verify(*, source: Path, output: Path, concept_id: str, actor: str) -> None:
 def _verify_locked(*, source: Path, output: Path, concept_id: str, actor: str) -> None:
     if not actor.startswith("human:") or len(actor) <= len("human:"):
         raise ValidationFailure("--by must use the actor form human:<id>")
+    if migration_available(output):
+        with staged_bundle(output, copy_existing=True) as staging:
+            migrate_bundle(staging)
+            _verify_locked(source=source, output=staging, concept_id=concept_id, actor=actor)
+            publish_staging(staging, output)
+            return
     output = output.resolve()
     sources = extract_sources(source)
     state = validate_bundle(output, sources, for_mutation=True)

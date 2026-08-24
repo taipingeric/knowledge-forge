@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 WORKFLOW_VERSION = "3"
 GENERATION_POLICY_VERSION = "1"
-STATE_SCHEMA_VERSION = 2
+STATE_SCHEMA_VERSION = 3
 LEGACY_STATE_SCHEMA_VERSION = 1
 CONCEPT_TYPES = ("Concept", "Definition", "Policy", "Procedure", "FAQ")
 

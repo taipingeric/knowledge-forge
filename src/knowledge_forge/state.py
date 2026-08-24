@@ -64,30 +64,33 @@ def _migrate_state(material: dict[str, object]) -> dict[str, object]:
     if type(version) is not int:
         raise ValidationFailure(
             "Unsupported State Schema Version "
-            f"{version!r}; supported versions are {LEGACY_STATE_SCHEMA_VERSION} and "
+            f"{version!r}; supported versions are {LEGACY_STATE_SCHEMA_VERSION} through "
             f"{STATE_SCHEMA_VERSION}."
         )
-    if version == STATE_SCHEMA_VERSION:
-        return material
-    if version != LEGACY_STATE_SCHEMA_VERSION:
+    if version < LEGACY_STATE_SCHEMA_VERSION or version > STATE_SCHEMA_VERSION:
         raise ValidationFailure(
             "Unsupported State Schema Version "
-            f"{version!r}; supported versions are {LEGACY_STATE_SCHEMA_VERSION} and "
+            f"{version!r}; supported versions are {LEGACY_STATE_SCHEMA_VERSION} through "
             f"{STATE_SCHEMA_VERSION}."
         )
-
     migrated = dict(material)
-    legacy_generation = migrated.get("generation")
-    if not isinstance(legacy_generation, dict):
-        raise ValidationFailure("Invalid schema v1 state: generation must be an object")
-    generation = dict(legacy_generation)
-    legacy_workflow_version = generation.pop("workflow_version", None)
-    if not isinstance(legacy_workflow_version, str):
-        raise ValidationFailure("Invalid schema v1 state: generation.workflow_version is required")
-    generation["generation_policy_version"] = GENERATION_POLICY_VERSION
-    migrated["generation"] = generation
-    migrated["workflow_version"] = legacy_workflow_version
-    migrated["state_version"] = STATE_SCHEMA_VERSION
+    while migrated["state_version"] < STATE_SCHEMA_VERSION:
+        if migrated["state_version"] == 1:
+            legacy_generation = migrated.get("generation")
+            if not isinstance(legacy_generation, dict):
+                raise ValidationFailure("Invalid schema v1 state: generation must be an object")
+            generation = dict(legacy_generation)
+            legacy_workflow_version = generation.pop("workflow_version", None)
+            if not isinstance(legacy_workflow_version, str):
+                raise ValidationFailure(
+                    "Invalid schema v1 state: generation.workflow_version is required"
+                )
+            generation["generation_policy_version"] = GENERATION_POLICY_VERSION
+            migrated["generation"] = generation
+            migrated["workflow_version"] = legacy_workflow_version
+            migrated["state_version"] = 2
+        elif migrated["state_version"] == 2:
+            migrated["state_version"] = 3
     return migrated
 
 
