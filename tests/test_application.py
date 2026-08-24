@@ -41,8 +41,8 @@ def concept(source: PDFSource, rule: str, notes: str = "Original") -> str:
             type="Policy",
             description="Rules for refunds.",
             body=(
-                f"# Rule\n\n{rule}[^policy.pdf@p1]\n\n# Notes\n\n{notes}\n\n"
-                "[^policy.pdf@p1]: Refund policy, page 1\n"
+                f"# Rule\n\n{rule}[^policy.pdf#pdf_page:1]\n\n# Notes\n\n{notes}\n\n"
+                "[^policy.pdf#pdf_page:1]: Refund policy, page 1\n"
             ),
             evidence=[Evidence(source_id=source.id, pages=[1])],
         ),
@@ -315,8 +315,8 @@ def test_agent_backed_update_reports_reasoning_and_each_synthesis_phase(
                 type=planned.type,
                 description=planned.description,
                 body=(
-                    "# Rule\n\nFive days.[^policy.pdf@p1]\n\n"
-                    "[^policy.pdf@p1]: Refund policy, page 1"
+                    "# Rule\n\nFive days.[^policy.pdf#pdf_page:1]\n\n"
+                    "[^policy.pdf#pdf_page:1]: Refund policy, page 1"
                 ),
                 evidence=[Evidence(source_id="policy.pdf", pages=[1])],
             )
@@ -403,8 +403,8 @@ def test_update_wires_the_live_bundle_path_into_the_reasoning_agent(
                 type=planned.type,
                 description=planned.description,
                 body=(
-                    "# Rule\n\nFive days.[^policy.pdf@p1]\n\n"
-                    "[^policy.pdf@p1]: Refund policy, page 1"
+                    "# Rule\n\nFive days.[^policy.pdf#pdf_page:1]\n\n"
+                    "[^policy.pdf#pdf_page:1]: Refund policy, page 1"
                 ),
                 evidence=[Evidence(source_id="policy.pdf", pages=[1])],
             )
@@ -532,7 +532,10 @@ def test_isolated_reasoning_sessions_share_the_page_index_and_publish_nothing_on
                 title=planned.title,
                 type=planned.type,
                 description=planned.description,
-                body="# Rule\n\nAlpha.[^policy.pdf@p1]\n\n[^policy.pdf@p1]: Refund policy, page 1",
+                body=(
+                    "# Rule\n\nAlpha.[^policy.pdf#pdf_page:1]\n\n"
+                    "[^policy.pdf#pdf_page:1]: Refund policy, page 1"
+                ),
                 evidence=[Evidence(source_id=source.id, pages=[1])],
             )
 

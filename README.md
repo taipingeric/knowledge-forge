@@ -237,17 +237,21 @@ knowledge/
 
 `.knowledge-forge/state.json` stores the workflow and Generation Identity, source dependencies, ownership, overrides, and verification audit. A deterministic checksum detects unexpected changes. `baseline/` wraps complete agent-authored Markdown in JSON so OKF consumers do not treat it as a public Concept Document. Both locations are tool-managed state and must not be edited manually.
 
-Each source entry uses a durable logical URN and records the public content hash and page ranges:
+Each Concept-local Source Reference uses a durable logical URN and records separate document and
+typed-locator hashes. Its `id` is deterministically derived from the Source Identity and page address:
 
 ```yaml
 sources:
-  - id: policies/refunds.pdf
+  - id: policies/refunds.pdf#pdf_page:3
     resource: urn:knowledge-forge:pdf:policies%2Frefunds.pdf
     content_sha256: <sha256>
-    pages: [2-4, "7"]
+    locator: {kind: pdf_page, page: 3}
+    locator_sha256: <sha256>
 ```
 
-Material, disputed, numeric, policy, or version-sensitive statements use page-level footnotes such as `[^policies/refunds.pdf@p3]`, with a matching footnote definition in the body.
+Material, disputed, numeric, policy, or version-sensitive statements use a footnote whose label exactly
+matches its Source Reference ID, such as `[^policies/refunds.pdf#pdf_page:3]`, with a matching
+footnote definition in the body.
 
 ## Keyword search over Concepts
 

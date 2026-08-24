@@ -237,17 +237,18 @@ knowledge/
 
 `.knowledge-forge/state.json` 保存 workflow 與 Generation Identity、source dependencies、ownership、overrides 與 verification audit，並以 deterministic checksum 偵測意外修改。`baseline/` 使用 JSON 包裝完整 agent Markdown，避免被 OKF 誤認為公開 Concept Document。這兩者都是 tool-managed state，不應人工編輯。
 
-每個 source entry 使用 durable logical URN，並公開記錄內容 hash 與頁碼：
+每個 Concept-local Source Reference 使用 durable logical URN，並分別記錄文件與 typed locator hash。其 `id` 由 Source Identity 與頁碼位址 deterministic 地推導而得：
 
 ```yaml
 sources:
-  - id: policies/refunds.pdf
+  - id: policies/refunds.pdf#pdf_page:3
     resource: urn:knowledge-forge:pdf:policies%2Frefunds.pdf
     content_sha256: <sha256>
-    pages: [2-4, "7"]
+    locator: {kind: pdf_page, page: 3}
+    locator_sha256: <sha256>
 ```
 
-重大、爭議、數字、政策或版本敏感陳述使用 page-level footnote，例如 `[^policies/refunds.pdf@p3]`，並在正文加入同 label 的 footnote definition。
+重大、爭議、數字、政策或版本敏感陳述使用 footnote，其 label 必須完全等於 Source Reference ID，例如 `[^policies/refunds.pdf#pdf_page:3]`，並在正文加入同 label 的 footnote definition。
 
 ## 對 Concept 做關鍵字搜尋
 

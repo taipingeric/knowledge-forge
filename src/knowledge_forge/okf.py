@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import json
 import re
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, TypeGuard
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 import yaml
 
@@ -16,8 +17,7 @@ FRONTMATTER = re.compile(
     r"\A\ufeff?---[ \t]*\r?\n(.*?)^---[ \t]*(?:\r?\n|\Z)",
     re.DOTALL | re.MULTILINE,
 )
-CLAIM_CITATION = re.compile(r"\[\^([^\]]+)@p(?:p)?\.?([0-9,-]+)\]")
-FOOTNOTE_DEFINITION = re.compile(r"^\[\^([^\]]+)@p(?:p)?\.?([0-9,-]+)\]:\s+.+$", re.MULTILINE)
+FOOTNOTE_DEFINITION = re.compile(r"^\[\^([^\]\s]+)\]:\s+.+$", re.MULTILINE)
 PORTABLE_FOOTNOTE_REFERENCE = re.compile(r"\[\^([^\]\s]+)\](?!:)")
 ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 ACTOR = re.compile(r"^(?:[^\s:/]+:\S+|\S+/\S+)$")
@@ -84,6 +84,24 @@ def expand_ranges(ranges: list[str]) -> list[int]:
     return sorted(set(pages))
 
 
+def source_reference_id(source_identity: str, page: int) -> str:
+    """Return the stable Concept-local reference ID for one PDF page."""
+    return f"{quote(source_identity, safe='/')}#pdf_page:{page}"
+
+
+def source_reference_identity(reference_id: str) -> str | None:
+    """Return the Source Identity encoded in a PDF Source Reference ID."""
+    match = re.fullmatch(r"(.+)#pdf_page:([1-9][0-9]*)", reference_id)
+    return unquote(match.group(1)) if match else None
+
+
+def _locator_hash(page: int) -> str:
+    """Hash a normalized PDF page locator for provenance integrity checks."""
+
+    locator = json.dumps({"kind": "pdf_page", "page": page}, sort_keys=True, separators=(",", ":"))
+    return sha256_text(locator)
+
+
 def render_concept(
     draft: ConceptDraft,
     sources: dict[str, KnowledgeSource],
@@ -99,14 +117,16 @@ def render_concept(
             raise ValidationFailure(f"Unknown source in concept {draft.slug}: {evidence.source_id}")
         if max(evidence.pages) > len(source.evidence):
             raise ValidationFailure(f"Page outside source bounds in concept {draft.slug}")
-        source_entries.append(
-            {
-                "id": source.id,
-                "resource": source.resource,
-                "content_sha256": source.content_sha256,
-                "pages": compact_ranges(evidence.pages),
-            }
-        )
+        for page in evidence.pages:
+            source_entries.append(
+                {
+                    "id": source_reference_id(source.source_identity, page),
+                    "resource": source.resource,
+                    "content_sha256": source.content_sha256,
+                    "locator": {"kind": "pdf_page", "page": page},
+                    "locator_sha256": _locator_hash(page),
+                }
+            )
     metadata: dict[str, Any] = {
         "type": draft.type,
         "title": draft.title,
@@ -438,8 +458,7 @@ def validate_concept(
         return [f"{concept_id}: {exc}"]
     if metadata.get("type") not in CONCEPT_TYPES:
         errors.append(f"{concept_id}: unsupported type {metadata.get('type')!r}")
-    source_ids: set[str] = set()
-    evidence_pages: dict[str, set[int]] = {}
+    source_references: dict[str, tuple[str, int]] = {}
     source_entries = metadata.get("sources", [])
     if not isinstance(source_entries, list):
         errors.append(f"{concept_id}: sources must be a list")
@@ -448,45 +467,59 @@ def validate_concept(
         if not isinstance(entry, dict):
             errors.append(f"{concept_id}: sources entries must be mappings")
             continue
-        missing = {"id", "resource", "content_sha256", "pages"} - entry.keys()
+        missing = {"id", "resource", "content_sha256", "locator", "locator_sha256"} - entry.keys()
         if missing:
             errors.append(f"{concept_id}: source missing {sorted(missing)}")
             continue
-        source_id = str(entry["id"])
-        source_ids.add(source_id)
+        reference_id = entry["id"]
+        locator = entry["locator"]
+        if not _non_empty_string(reference_id):
+            errors.append(f"{concept_id}: source reference ID must be a non-empty string")
+            continue
+        if (
+            not isinstance(locator, dict)
+            or locator.get("kind") != "pdf_page"
+            or not isinstance(locator.get("page"), int)
+            or locator["page"] < 1
+        ):
+            errors.append(
+                f"{concept_id}: source reference {reference_id} has an invalid PDF page locator"
+            )
+            continue
+        page = locator["page"]
+        source_id = source_reference_identity(reference_id)
+        if source_id is None:
+            errors.append(f"{concept_id}: invalid source reference ID {reference_id}")
+            continue
+        if reference_id != source_reference_id(source_id, page):
+            errors.append(
+                f"{concept_id}: source reference ID does not match its locator for {reference_id}"
+            )
+        if reference_id in source_references:
+            errors.append(f"{concept_id}: duplicate source reference {reference_id}")
+            continue
+        source_references[reference_id] = (source_id, page)
         expected_resource = f"urn:knowledge-forge:pdf:{quote(source_id, safe='')}"
         if entry["resource"] != expected_resource:
-            errors.append(f"{concept_id}: invalid logical resource for {source_id}")
+            errors.append(f"{concept_id}: invalid logical resource for {reference_id}")
         if not re.fullmatch(r"[0-9a-f]{64}", str(entry["content_sha256"])):
-            errors.append(f"{concept_id}: invalid SHA-256 for {source_id}")
-        try:
-            pages = expand_ranges(entry["pages"])
-            evidence_pages[source_id] = set(pages)
-            if (
-                source_pages
-                and source_id in source_pages
-                and max(pages, default=0) > source_pages[source_id]
-            ):
-                errors.append(f"{concept_id}: page outside source bounds for {source_id}")
-        except ValidationFailure as exc:
-            errors.append(f"{concept_id}: {exc}")
-    citations = list(dict.fromkeys(CLAIM_CITATION.findall(body)))
+            errors.append(f"{concept_id}: invalid document SHA-256 for {reference_id}")
+        if entry["locator_sha256"] != _locator_hash(page):
+            errors.append(f"{concept_id}: invalid locator SHA-256 for {reference_id}")
+        if source_pages is not None:
+            if source_id not in source_pages:
+                errors.append(f"{concept_id}: source reference is outside referenced evidence")
+            elif page > source_pages[source_id]:
+                errors.append(f"{concept_id}: page outside source bounds for {reference_id}")
+    citations = list(dict.fromkeys(PORTABLE_FOOTNOTE_REFERENCE.findall(body)))
     definitions = set(FOOTNOTE_DEFINITION.findall(body))
-    for source_id, page_spec in citations:
-        if source_id not in source_ids:
-            errors.append(f"{concept_id}: citation references missing source {source_id}")
-        try:
-            cited_pages = set(expand_ranges(page_spec.split(",")))
-            if source_id in evidence_pages and not cited_pages <= evidence_pages[source_id]:
-                errors.append(
-                    f"{concept_id}: citation pages are outside Concept evidence for {source_id}"
-                )
-        except ValidationFailure as exc:
-            errors.append(f"{concept_id}: {exc}")
-        if (source_id, page_spec) not in definitions:
+    for reference_id in citations:
+        if reference_id not in source_references:
             errors.append(
-                f"{concept_id}: citation {source_id}@p{page_spec} has no footnote definition"
+                f"{concept_id}: citation references missing source reference {reference_id}"
             )
+        if reference_id not in definitions:
+            errors.append(f"{concept_id}: citation {reference_id} has no footnote definition")
     return errors
 
 

@@ -18,7 +18,7 @@ from pydantic import BaseModel
 
 from .errors import SearchQueryFailure, ValidationFailure
 from .models import ConceptDraft, ConceptPlan, KnowledgeSource, PlannedConcept
-from .okf import render_concept, validate_concept
+from .okf import render_concept, source_reference_id, validate_concept
 from .sources import EvidenceIndex
 from .tools import build_read_pages_tool, build_search_knowledge_tool, build_search_pages_tool
 
@@ -95,9 +95,9 @@ Knowledge is organized by concepts across documents, not by source-document summ
 Represent contradictions explicitly and attribute each view; do not decide which source is true.
 Use only the controlled concept types requested by the output schema.
 Material high-risk, disputed, numeric, policy, and version-sensitive claims in Markdown must carry
-a citation like [^<source-id>@p3] or [^<source-id>@pp3-5]. Each cited source must also appear in
-the draft evidence list. Add a Markdown footnote definition for every citation label. Ordinary
-synthesis may rely on concept-level evidence.
+a citation whose footnote label exactly equals a valid Source Reference ID. Each cited PDF page
+must also appear in the draft evidence list. Add a Markdown footnote definition for every citation
+label. Ordinary synthesis may rely on concept-level evidence.
 Return only the requested structured response through the response tool.
 """
 
@@ -242,7 +242,16 @@ class ReasoningAgent:
         """Synthesize and validate one planned Concept using only indexed evidence."""
 
         source_contract = [
-            {"id": source.id, "pages": f"1-{len(source.evidence)}"}
+            {
+                "source_identity": source.id,
+                "references": [
+                    {
+                        "id": source_reference_id(source.id, page),
+                        "locator": {"kind": "pdf_page", "page": page},
+                    }
+                    for page in range(1, len(source.evidence) + 1)
+                ],
+            }
             for source in self._sources.values()
         ]
         valid_source_ids = sorted(self._sources)
@@ -276,10 +285,11 @@ class ReasoningAgent:
             f"Synthesize this planned concept in {language}: "
             f"{concept.model_dump_json()}. Search and read all relevant pages. Produce cohesive "
             "Markdown organized with meaningful headings. Evidence must list every PDF/page range "
-            "used, and no unsupported factual claims may appear. Valid source IDs and page bounds: "
-            f"{json.dumps(source_contract, ensure_ascii=False)}. Use only those exact source IDs. "
-            "Copy the complete source ID verbatim into every Markdown citation label and its "
-            "footnote definition; never abbreviate a filename or replace it with initials. "
+            "used, and no unsupported factual claims may appear. Valid source references and page "
+            f"locators: {json.dumps(source_contract, ensure_ascii=False)}. "
+            "Use only the listed source identities in draft evidence. "
+            "Every citation footnote label and its definition must exactly "
+            "equal a valid Source Reference ID; never abbreviate, alter, or invent an ID. "
             "Never use placeholder, sentinel, null, or invented source IDs. If initial searches "
             "return no evidence, refine the search and read supporting pages before drafting.",
             validate_draft,

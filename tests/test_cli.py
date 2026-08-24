@@ -52,11 +52,14 @@ def test_validate_command_portable_warns_about_managed_state_without_reading_it(
     assert result.exit_code == 0
     assert result.stdout.strip() == "PASS (portable OKF 0.2)"
     assert "managed state detected — run with --managed for full validation" in result.stderr
-    assert sorted(
-        (path.relative_to(output), path.read_bytes())
-        for path in output.rglob("*")
-        if path.is_file()
-    ) == before
+    assert (
+        sorted(
+            (path.relative_to(output), path.read_bytes())
+            for path in output.rglob("*")
+            if path.is_file()
+        )
+        == before
+    )
 
 
 def test_validate_command_managed_validates_portable_then_managed_layer(
@@ -139,9 +142,7 @@ def test_validate_command_rejects_a_missing_bundle_directory(tmp_path: Path) -> 
         "---  \r\ntype: Guide\r\n--- \r\n# Guide\r\n",
     ],
 )
-def test_validate_command_accepts_portable_frontmatter_delimiters(
-    tmp_path: Path, raw: str
-) -> None:
+def test_validate_command_accepts_portable_frontmatter_delimiters(tmp_path: Path, raw: str) -> None:
     output = tmp_path / "knowledge"
     output.mkdir()
     (output / "guide.md").write_text(raw, encoding="utf-8")
@@ -179,9 +180,7 @@ def test_validate_command_accepts_reserved_files_unknown_types_and_extensions(
 ) -> None:
     output = tmp_path / "knowledge"
     (output / "section").mkdir(parents=True)
-    (output / "index.md").write_text(
-        '---\nokf_version: "0.2"\n---\n\n# Knowledge\n'
-    )
+    (output / "index.md").write_text('---\nokf_version: "0.2"\n---\n\n# Knowledge\n')
     (output / "section" / "index.md").write_text("# Section\n")
     (output / "section" / "log.md").write_text("# Log\n\n## 2026-08-17\n- Added.\n")
     (output / "section" / "unusual.md").write_text(
@@ -403,9 +402,7 @@ def test_validate_command_rejects_malformed_optional_v02_fields(
 ) -> None:
     output = tmp_path / "knowledge"
     output.mkdir()
-    (output / "concept.md").write_text(
-        f"---\ntype: {concept_type}\n{frontmatter}---\n\n{body}"
-    )
+    (output / "concept.md").write_text(f"---\ntype: {concept_type}\n{frontmatter}---\n\n{body}")
 
     result = CliRunner().invoke(cli.app, ["validate", "--out", str(output)])
 
@@ -743,7 +740,8 @@ class FakeTimingAgent:
             type=concept.type,
             description=concept.description,
             body=(
-                "# Rule\n\nSeven days.[^policy.pdf@p1]\n\n[^policy.pdf@p1]: Refund policy, page 1"
+                "# Rule\n\nSeven days.[^policy.pdf#pdf_page:1]\n\n"
+                "[^policy.pdf#pdf_page:1]: Refund policy, page 1"
             ),
             evidence=[Evidence(source_id="policy.pdf", pages=[1])],
         )

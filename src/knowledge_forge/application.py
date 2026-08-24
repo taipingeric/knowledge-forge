@@ -31,6 +31,7 @@ from .okf import (
     managed_fields_hash,
     parse_markdown,
     render_index,
+    source_reference_identity,
 )
 from .publish import output_lock, publish_staging, staged_bundle
 from .security import generation_identity, reject_tracing, resolve_disjoint_trees
@@ -88,22 +89,33 @@ def _source_dependencies(raw: str) -> dict[str, str]:
     """Extract the source identity-to-content-hash dependencies from a Concept."""
 
     metadata, _ = parse_markdown(raw)
-    return {
-        str(item["id"]): str(item["content_sha256"])
-        for item in metadata.get("sources", [])
-        if isinstance(item, dict) and "id" in item and "content_sha256" in item
-    }
+    dependencies: dict[str, str] = {}
+    for item in metadata.get("sources", []):
+        if not isinstance(item, dict) or "id" not in item or "content_sha256" not in item:
+            continue
+        source_id = source_reference_identity(str(item["id"]))
+        if source_id is not None:
+            dependencies[source_id] = str(item["content_sha256"])
+    return dependencies
 
 
 def _evidence_from_raw(raw: str) -> list[dict[str, object]]:
     """Convert rendered Concept source entries into evidence values for conflicts."""
 
     metadata, _ = parse_markdown(raw)
-    return [
-        {"source_id": item["id"], "pages": _expand_pages(item.get("pages", []))}
-        for item in metadata.get("sources", [])
-        if isinstance(item, dict) and "id" in item
-    ]
+    evidence: list[dict[str, object]] = []
+    for item in metadata.get("sources", []):
+        if not isinstance(item, dict):
+            continue
+        source_id = source_reference_identity(str(item.get("id", "")))
+        locator = item.get("locator")
+        if (
+            source_id is not None
+            and isinstance(locator, dict)
+            and isinstance(locator.get("page"), int)
+        ):
+            evidence.append({"source_id": source_id, "pages": [locator["page"]]})
+    return evidence
 
 
 def _conflict_evidence_hash(conflict: Conflict) -> str:
@@ -635,14 +647,6 @@ def _update_locked(
         with processing_phase(timing, "Atomic publication"):
             publish_staging(staging, output)
     return True
-
-
-def _expand_pages(values: list[str]) -> list[int]:
-    """Expand rendered source page ranges for reconciliation evidence."""
-
-    from .okf import expand_ranges
-
-    return expand_ranges(values)
 
 
 def _write_reconciliation(

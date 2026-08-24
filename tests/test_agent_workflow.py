@@ -53,7 +53,9 @@ class SourceContractFakeAgent:
     def invoke(self, inputs: dict[str, object], _: dict[str, object]) -> dict[str, object]:
         prompt = str(inputs)
         self.prompts.append(prompt)
-        source_id = "policy.pdf" if "Valid source IDs and page bounds" in prompt else "_none"
+        source_id = (
+            "policy.pdf" if "Valid source references and page locators" in prompt else "_none"
+        )
         return {
             "messages": [AIMessage(content="structured")],
             "structured_response": {
@@ -62,8 +64,8 @@ class SourceContractFakeAgent:
                 "type": "Concept",
                 "description": "Deadlock behavior.",
                 "body": (
-                    "# Deadlocks\n\nTransactions can deadlock.[^policy.pdf@p1]\n\n"
-                    "[^policy.pdf@p1]: Policy, page 1"
+                    "# Deadlocks\n\nTransactions can deadlock.[^policy.pdf#pdf_page:1]\n\n"
+                    "[^policy.pdf#pdf_page:1]: Policy, page 1"
                 ),
                 "evidence": [{"source_id": source_id, "pages": [1]}],
             },
@@ -149,7 +151,7 @@ def test_synthesis_rejects_source_sentinels_and_supplies_valid_source_contract(
         )
 
     assert draft.evidence == [Evidence(source_id="policy.pdf", pages=[1])]
-    assert "Valid source IDs and page bounds" in fake.prompts[0]
+    assert "Valid source references and page locators" in fake.prompts[0]
     assert "_none" not in fake.prompts[0]
 
 
@@ -167,7 +169,8 @@ def test_synthesis_repair_names_valid_source_ids(
     valid = {
         **invalid,
         "body": (
-            "# Deadlocks\n\nSupported draft.[^policy.pdf@p1]\n\n[^policy.pdf@p1]: Policy, page 1"
+            "# Deadlocks\n\nSupported draft.[^policy.pdf#pdf_page:1]\n\n"
+            "[^policy.pdf#pdf_page:1]: Policy, page 1"
         ),
         "evidence": [{"source_id": "policy.pdf", "pages": [1]}],
     }
@@ -214,8 +217,8 @@ def test_synthesis_repairs_invalid_citation_source_ids(
     valid = {
         **invalid,
         "body": (
-            "# Deadlocks\n\nTransactions can deadlock.[^policy.pdf@p1]\n\n"
-            "[^policy.pdf@p1]: Policy, page 1"
+            "# Deadlocks\n\nTransactions can deadlock.[^policy.pdf#pdf_page:1]\n\n"
+            "[^policy.pdf#pdf_page:1]: Policy, page 1"
         ),
     }
     fake = FakeCompiledAgent([invalid, valid])
@@ -241,9 +244,9 @@ def test_synthesis_repairs_invalid_citation_source_ids(
             "English",
         )
 
-    assert "[^policy.pdf@p1]" in draft.body
-    assert "citation references missing source hpm" in fake.prompts[1]
-    assert "never abbreviate a filename or replace it with initials" in fake.prompts[0]
+    assert "[^policy.pdf#pdf_page:1]" in draft.body
+    assert "citation references missing source reference hpm@p1" in fake.prompts[1]
+    assert "must exactly equal a valid Source Reference ID" in fake.prompts[0]
 
 
 def test_reasoning_agent_forces_responses_api_without_storage(
@@ -672,7 +675,8 @@ class FakeReasoningAgent:
             type=concept.type,
             description=concept.description,
             body=(
-                "# Rule\n\nSeven days.[^policy.pdf@p1]\n\n[^policy.pdf@p1]: Refund policy, page 1"
+                "# Rule\n\nSeven days.[^policy.pdf#pdf_page:1]\n\n"
+                "[^policy.pdf#pdf_page:1]: Refund policy, page 1"
             ),
             evidence=[Evidence(source_id="policy.pdf", pages=[1])],
         )
@@ -714,8 +718,8 @@ class IsolatedSessionAgent:
             type=concept.type,
             description=concept.description,
             body=(
-                f"# Rule\n\n{concept.title}.[^policy.pdf@p1]\n\n"
-                "[^policy.pdf@p1]: Refund policy, page 1"
+                f"# Rule\n\n{concept.title}.[^policy.pdf#pdf_page:1]\n\n"
+                "[^policy.pdf#pdf_page:1]: Refund policy, page 1"
             ),
             evidence=[Evidence(source_id="policy.pdf", pages=[1])],
         )

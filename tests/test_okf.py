@@ -1,6 +1,7 @@
 from knowledge_forge.models import ConceptDraft, Evidence, PDFSource, SourcePage
 from knowledge_forge.okf import (
     compact_ranges,
+    dump_markdown,
     expand_ranges,
     parse_markdown,
     render_concept,
@@ -31,18 +32,21 @@ def test_rendered_concept_has_okf_provenance() -> None:
         type="Policy",
         description="The rules for refunds.",
         body=(
-            "# Rule\n\nRefunds take seven days.[^policies/refunds.pdf@p2]\n\n"
-            "[^policies/refunds.pdf@p2]: Refund policy, page 2"
+            "# Rule\n\nRefunds take seven days.[^policies/refunds.pdf#pdf_page:2]\n\n"
+            "[^policies/refunds.pdf#pdf_page:2]: Refund policy, page 2"
         ),
         evidence=[Evidence(source_id=pdf.id, pages=[2])],
     )
     raw = render_concept(draft, {pdf.id: pdf}, "knowledge-forge/test")
     metadata, _ = parse_markdown(raw)
     assert metadata["sources"][0]["resource"] == logical_resource(pdf.id)
+    assert metadata["sources"][0]["id"] == "policies/refunds.pdf#pdf_page:2"
+    assert metadata["sources"][0]["locator"] == {"kind": "pdf_page", "page": 2}
+    assert len(metadata["sources"][0]["locator_sha256"]) == 64
     assert validate_concept(raw, "concepts/refund-policy", {pdf.id: 5}) == []
 
 
-def test_citation_source_id_may_contain_at_sign() -> None:
+def test_source_reference_id_escapes_source_identity_characters() -> None:
     pdf = source().model_copy(update={"id": "policies/team@example.pdf"})
     pdf.resource = logical_resource(pdf.id)
     draft = ConceptDraft(
@@ -51,8 +55,8 @@ def test_citation_source_id_may_contain_at_sign() -> None:
         type="Policy",
         description="The rules for refunds.",
         body=(
-            "# Rule\n\nSeven days.[^policies/team@example.pdf@p2]\n\n"
-            "[^policies/team@example.pdf@p2]: Policy, page 2"
+            "# Rule\n\nSeven days.[^policies/team%40example.pdf#pdf_page:2]\n\n"
+            "[^policies/team%40example.pdf#pdf_page:2]: Policy, page 2"
         ),
         evidence=[Evidence(source_id=pdf.id, pages=[2])],
     )
@@ -74,4 +78,55 @@ def test_repeated_invalid_citation_is_reported_once() -> None:
 
     errors = validate_concept(raw, "concepts/refund-policy", {pdf.id: 5})
 
-    assert errors.count("concepts/refund-policy: citation references missing source hpm") == 1
+    assert (
+        errors.count("concepts/refund-policy: citation references missing source reference hpm@p2")
+        == 1
+    )
+
+
+def test_validation_rejects_missing_definition_and_out_of_bounds_page() -> None:
+    pdf = source()
+    draft = ConceptDraft(
+        slug="refund-policy",
+        title="Refund Policy",
+        type="Policy",
+        description="The rules for refunds.",
+        body="# Rule\n\nSeven days.[^policies/refunds.pdf#pdf_page:2]",
+        evidence=[Evidence(source_id=pdf.id, pages=[2])],
+    )
+    raw = render_concept(draft, {pdf.id: pdf}, "knowledge-forge/test")
+
+    errors = validate_concept(raw, "concepts/refund-policy", {pdf.id: 1})
+
+    assert (
+        "concepts/refund-policy: citation "
+        "policies/refunds.pdf#pdf_page:2 has no footnote definition" in errors
+    )
+    assert (
+        "concepts/refund-policy: page outside source bounds for policies/refunds.pdf#pdf_page:2"
+        in errors
+    )
+
+
+def test_validation_rejects_a_source_reference_outside_known_evidence() -> None:
+    pdf = source()
+    draft = ConceptDraft(
+        slug="refund-policy",
+        title="Refund Policy",
+        type="Policy",
+        description="The rules for refunds.",
+        body=(
+            "# Rule\n\nSeven days.[^unknown.pdf#pdf_page:1]\n\n"
+            "[^unknown.pdf#pdf_page:1]: Unknown policy, page 1"
+        ),
+        evidence=[Evidence(source_id=pdf.id, pages=[2])],
+    )
+    metadata, body = parse_markdown(render_concept(draft, {pdf.id: pdf}, "knowledge-forge/test"))
+    metadata["sources"][0]["id"] = "unknown.pdf#pdf_page:1"
+    metadata["sources"][0]["resource"] = logical_resource("unknown.pdf")
+    metadata["sources"][0]["locator"] = {"kind": "pdf_page", "page": 1}
+    metadata["sources"][0]["locator_sha256"] = sha256_text('{"kind":"pdf_page","page":1}')
+
+    errors = validate_concept(dump_markdown(metadata, body), "concepts/refund-policy", {pdf.id: 5})
+
+    assert "concepts/refund-policy: source reference is outside referenced evidence" in errors
