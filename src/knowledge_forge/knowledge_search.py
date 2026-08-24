@@ -10,6 +10,8 @@ DEFAULT_SNIPPET_RADIUS = 80
 
 
 def _snippet(body: str, keywords: list[str], radius: int) -> str:
+    """Return a compact context window around the first matching keyword."""
+
     lowered = body.casefold()
     for keyword in keywords:
         index = lowered.find(keyword.casefold())
