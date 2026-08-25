@@ -103,8 +103,8 @@ def source_reference_id(source_identity: str, locator: EvidenceLocator | int) ->
 
 
 def source_reference_identity(reference_id: str) -> str | None:
-    """Return the Source Identity encoded in a PDF Source Reference ID."""
-    match = re.fullmatch(r"(.+)#pdf_page:([1-9][0-9]*)", reference_id)
+    """Return the Source Identity encoded in a typed Source Reference ID."""
+    match = re.fullmatch(r"(.+)#(?:pdf_page:[1-9][0-9]*|markdown_block:.+)", reference_id)
     return unquote(match.group(1)) if match else None
 
 
