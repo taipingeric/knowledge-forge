@@ -37,7 +37,12 @@ from .okf import (
 from .publish import output_lock, publish_staging, staged_bundle
 from .security import generation_identity, reject_tracing, resolve_disjoint_trees
 from .sources import EvidenceIndex, extract_sources, sha256_text, source_set_hash
-from .staleness import detect_staleness, write_staleness_report
+from .staleness import (
+    detect_staleness,
+    load_pending_staleness_report,
+    prepared_staleness_resolution,
+    write_staleness_report,
+)
 from .state import (
     baseline_path,
     bundle_hash,
@@ -508,6 +513,7 @@ def update(
     language: str,
     max_agent_steps: int,
     parallel_tool_calls: bool = True,
+    regenerate_all: bool = False,
     progress: Callable[[str], None] | None = None,
     timing: ProcessingTimer | None = None,
 ) -> bool:
@@ -525,6 +531,7 @@ def update(
             language=language,
             max_agent_steps=max_agent_steps,
             parallel_tool_calls=parallel_tool_calls,
+            regenerate_all=regenerate_all,
             progress=progress,
             timing=timing,
         )
@@ -540,6 +547,9 @@ def _update_locked(
     language: str,
     max_agent_steps: int,
     parallel_tool_calls: bool = True,
+    regenerate_all: bool = False,
+    regeneration_output: Path | None = None,
+    resolve_regeneration: bool = True,
     progress: Callable[[str], None] | None = None,
     timing: ProcessingTimer | None = None,
 ) -> bool:
@@ -557,10 +567,17 @@ def _update_locked(
                 language=language,
                 max_agent_steps=max_agent_steps,
                 parallel_tool_calls=parallel_tool_calls,
+                regenerate_all=regenerate_all,
+                regeneration_output=output if regenerate_all else None,
+                resolve_regeneration=False,
                 progress=progress,
                 timing=timing,
             )
-            publish_staging(staging, output)
+            if regenerate_all:
+                with prepared_staleness_resolution(output, load_pending_staleness_report(output)):
+                    publish_staging(staging, output)
+            else:
+                publish_staging(staging, output)
             return changed
     report = progress or (lambda _: None)
     output = output.resolve()
@@ -581,32 +598,57 @@ def _update_locked(
         parallel_tool_calls=parallel_tool_calls,
         concept_concurrency=state.generation.concept_concurrency,
     )
-    stale_concepts = detect_staleness(output, state, sources)
-    planning_stale = source_set_hash(sources) != state.source_set_hash
-    generation_stale = (
-        sorted(
-            concept_id
-            for concept_id, concept_state in state.concepts.items()
-            if concept_state.ownership == "agent" and not concept_state.deleted
+    source_hash = source_set_hash(sources)
+    regeneration_report: dict[str, object] | None = None
+    if regenerate_all:
+        authorization_output = regeneration_output or output
+        regeneration_report = load_pending_staleness_report(authorization_output)
+        if regeneration_report["live_bundle_hash"] != bundle_hash(
+            authorization_output, include_state=True
+        ):
+            raise ValidationFailure("Regeneration Impact Report no longer matches the live Bundle")
+        if regeneration_report["source_set_hash"] != source_hash:
+            raise ValidationFailure("Regeneration Impact Report no longer matches the source set")
+        try:
+            report_generation = GenerationIdentity.model_validate(regeneration_report["generation"])
+        except (TypeError, ValueError) as exc:
+            raise ValidationFailure(
+                "Invalid Generation Identity in Regeneration Impact Report"
+            ) from exc
+        if not _same_generation_request(report_generation, identity):
+            raise ValidationFailure(
+                "Regeneration Impact Report no longer matches the requested Generation Identity"
+            )
+    else:
+        stale_concepts = detect_staleness(output, state, sources)
+        planning_stale = source_hash != state.source_set_hash
+        generation_stale = (
+            sorted(
+                concept_id
+                for concept_id, concept_state in state.concepts.items()
+                if concept_state.ownership == "agent" and not concept_state.deleted
+            )
+            if not _same_generation_request(identity, state.generation)
+            else []
         )
-        if not _same_generation_request(identity, state.generation)
-        else []
-    )
-    if stale_concepts or planning_stale or generation_stale:
-        raise StalenessDetected(
-            str(
-                write_staleness_report(
-                    output,
-                    stale_concepts,
-                    planning_stale=planning_stale,
-                    generation_stale=generation_stale,
+        if stale_concepts or planning_stale or generation_stale:
+            raise StalenessDetected(
+                str(
+                    write_staleness_report(
+                        output,
+                        stale_concepts,
+                        planning_stale=planning_stale,
+                        generation_stale=generation_stale,
+                        live_bundle_hash=bundle_hash(output, include_state=True),
+                        source_set_hash=source_hash,
+                        generation=identity,
+                    )
                 )
             )
-        )
     report("Evaluating deterministic no-change conditions...")
     with processing_phase(timing, "No-change evaluation"):
         current = public_concepts(output)
-        source_unchanged = source_set_hash(sources) == state.source_set_hash
+        source_unchanged = source_hash == state.source_set_hash
         generation_unchanged = _same_generation_request(identity, state.generation)
         no_changes = (
             source_unchanged and generation_unchanged and bundle_hash(output) == state.bundle_hash
@@ -621,7 +663,7 @@ def _update_locked(
         for concept_id, item in state.concepts.items()
         if item.deleted
     }
-    if source_unchanged and generation_unchanged:
+    if source_unchanged and generation_unchanged and not regenerate_all:
         report("Reusing the previous agent baseline; source evidence is unchanged.")
         with processing_phase(timing, "Agent Baseline reuse"):
             identity = state.generation
@@ -775,7 +817,13 @@ def _update_locked(
             raise ReconciliationRequired(str(output.parent / f"{output.name}.reconciliation.md"))
         report("Publishing the bundle atomically...")
         with processing_phase(timing, "Atomic publication"):
-            publish_staging(staging, output)
+            if regeneration_report is not None and resolve_regeneration:
+                with prepared_staleness_resolution(
+                    regeneration_output or output, regeneration_report
+                ):
+                    publish_staging(staging, output)
+            else:
+                publish_staging(staging, output)
     return True
 
 
