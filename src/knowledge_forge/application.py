@@ -608,9 +608,7 @@ def _update_locked(
     with processing_phase(timing, "Current Bundle validation"):
         state = validate_bundle(output, for_mutation=True)
     imported = _recognized_import_concepts(source)
-    if imported is not None and all(
-        item.ownership == "imported" for item in state.concepts.values()
-    ):
+    if imported is not None:
         return _update_import_locked(output, state, imported, report, timing)
     report("Reading Knowledge Sources...")
     with processing_phase(timing, "Knowledge Source reading"):
@@ -868,6 +866,7 @@ def _update_import_locked(
         return False
     published: dict[str, str] = {}
     baselines: dict[str, str] = {}
+    ownership: dict[str, str] = {}
     conflicts: list[Conflict] = []
     for concept_id in sorted(candidates):
         candidate = candidates[concept_id]
@@ -876,6 +875,22 @@ def _update_import_locked(
         if prior is None or human is None:
             published[concept_id] = candidate
             baselines[concept_id] = candidate
+            ownership[concept_id] = "imported"
+            continue
+        if prior.ownership == "human":
+            conflicts.append(
+                Conflict(
+                    id=sha256_text(f"{concept_id}\0import-ownership")[:16],
+                    concept_id=concept_id,
+                    block_id="ownership",
+                    human=human,
+                    candidate=candidate,
+                    evidence=_evidence_from_raw(candidate),
+                    reason="An Imported Concept collides with a Human-owned Concept.",
+                )
+            )
+            published[concept_id] = human
+            ownership[concept_id] = "human"
             continue
         baseline = load_baseline(output, concept_id).raw_markdown
         result = merge_concept(
@@ -891,13 +906,34 @@ def _update_import_locked(
                 merged = dump_markdown(metadata, body)
         published[concept_id] = merged
         baselines[concept_id] = candidate
+        ownership[concept_id] = "imported"
+    for concept_id, prior in state.concepts.items():
+        if prior.ownership != "imported" or concept_id in candidates:
+            continue
+        human = current.get(concept_id)
+        baseline = load_baseline(output, concept_id).raw_markdown
+        if human is None or human == baseline:
+            continue
+        conflicts.append(
+            Conflict(
+                id=sha256_text(f"{concept_id}\0import-withdrawal")[:16],
+                concept_id=concept_id,
+                block_id="document:source-removal",
+                baseline=baseline,
+                human=human,
+                reason="An Imported Concept was withdrawn while it has a Human Delta.",
+            )
+        )
+        published[concept_id] = human
+        baselines[concept_id] = baseline
+        ownership[concept_id] = "imported"
     report("Merging imported Concepts and detecting Reconciliation Conflicts...")
     with staged_bundle(output, copy_existing=True) as staging:
         _write_bundle(
             staging,
             concepts=published,
             baselines=baselines,
-            ownership={concept_id: "imported" for concept_id in published},
+            ownership=ownership,
             sources=[],
             generation=state.generation,
             previous_state=state,
@@ -1056,7 +1092,8 @@ def _reconcile_locked(*, source: Path, output: Path, resolution_path: Path) -> N
     resolutions = ResolutionFile.model_validate(
         yaml.safe_load(resolution_path.read_text(encoding="utf-8"))
     )
-    sources = extract_sources(source)
+    imported = _recognized_import_concepts(source)
+    sources = [] if imported is not None else extract_sources(source)
     pending = work / "pending"
     if manifest.output_path != str(output):
         raise ValidationFailure("Reconciliation output path does not match the manifest")
@@ -1098,6 +1135,9 @@ def _reconcile_locked(*, source: Path, output: Path, resolution_path: Path) -> N
         choice = choices[conflict.id]
         raw = pending_concepts.get(conflict.concept_id, "")
         if choice.action == "keep-human":
+            if conflict.block_id == "document:source-removal":
+                ownership[conflict.concept_id] = "human"
+                continue
             if conflict.block_id == "document:deletion":
                 pending_concepts.pop(conflict.concept_id, None)
                 ownership[conflict.concept_id] = "human"
@@ -1126,7 +1166,7 @@ def _reconcile_locked(*, source: Path, output: Path, resolution_path: Path) -> N
                 if conflict.candidate is None:
                     raise ValidationFailure(f"Conflict {conflict.id} has no candidate")
                 raw = conflict.candidate
-                ownership[conflict.concept_id] = "agent"
+                ownership[conflict.concept_id] = "imported"
                 deleted.pop(conflict.concept_id, None)
                 baseline_overrides[conflict.concept_id] = conflict.candidate
             raw = _set_conflict_value(raw, conflict, conflict.candidate)
@@ -1146,6 +1186,10 @@ def _reconcile_locked(*, source: Path, output: Path, resolution_path: Path) -> N
                     "Manual resolution artifact must remain inside work directory"
                 )
             raw = artifact.read_text(encoding="utf-8")
+            if conflict.block_id == "ownership":
+                ownership[conflict.concept_id] = "imported"
+                if conflict.candidate is not None:
+                    baseline_overrides[conflict.concept_id] = conflict.candidate
         if raw:
             pending_concepts[conflict.concept_id] = raw
         else:
@@ -1154,13 +1198,14 @@ def _reconcile_locked(*, source: Path, output: Path, resolution_path: Path) -> N
     baselines = {
         concept_id: load_baseline(pending, concept_id).raw_markdown
         for concept_id, item in pending_state.concepts.items()
-        if ownership.get(concept_id) == "agent" and baseline_path(pending, concept_id).is_file()
+        if ownership.get(concept_id) in {"agent", "imported"}
+        and baseline_path(pending, concept_id).is_file()
     }
     baselines.update(baseline_overrides)
     baselines = {
         concept_id: raw
         for concept_id, raw in baselines.items()
-        if ownership.get(concept_id) == "agent"
+        if ownership.get(concept_id) in {"agent", "imported"}
     }
     with staged_bundle(output, copy_existing=True) as staging:
         _write_bundle(
