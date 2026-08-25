@@ -598,6 +598,11 @@ def _update_locked(
     report("Validating the current bundle...")
     with processing_phase(timing, "Current Bundle validation"):
         state = validate_bundle(output, for_mutation=True)
+    imported = _recognized_import_concepts(source)
+    if imported is not None and all(
+        item.ownership == "imported" for item in state.concepts.values()
+    ):
+        return _update_import_locked(output, state, imported, report, timing)
     report("Reading Knowledge Sources...")
     with processing_phase(timing, "Knowledge Source reading"):
         sources = extract_sources(source)
@@ -837,6 +842,57 @@ def _update_locked(
                     publish_staging(staging, output)
             else:
                 publish_staging(staging, output)
+    return True
+
+
+def _update_import_locked(
+    output: Path,
+    state: ForgeState,
+    candidates: dict[str, str],
+    report: Callable[[str], None],
+    timing: ProcessingTimer | None,
+) -> bool:
+    """Update an import-only Bundle without model configuration or reasoning."""
+    current = public_concepts(output)
+    if current == candidates and bundle_hash(output) == state.bundle_hash:
+        report("The imported Bundle and managed Bundle are unchanged.")
+        return False
+    published: dict[str, str] = {}
+    baselines: dict[str, str] = {}
+    conflicts: list[Conflict] = []
+    for concept_id in sorted(candidates):
+        candidate = candidates[concept_id]
+        prior = state.concepts.get(concept_id)
+        human = current.get(concept_id)
+        if prior is None or human is None:
+            published[concept_id] = candidate
+            baselines[concept_id] = candidate
+            continue
+        baseline = load_baseline(output, concept_id).raw_markdown
+        result = merge_concept(
+            concept_id, baseline, human, candidate, _evidence_from_raw(candidate)
+        )
+        conflicts.extend(result.conflicts)
+        published[concept_id] = _preserve_verification(human, result.markdown)
+        baselines[concept_id] = candidate
+    report("Merging imported Concepts and detecting Reconciliation Conflicts...")
+    with staged_bundle(output, copy_existing=True) as staging:
+        _write_bundle(
+            staging,
+            concepts=published,
+            baselines=baselines,
+            ownership={concept_id: "imported" for concept_id in published},
+            sources=[],
+            generation=state.generation,
+            previous_state=state,
+            action="Import update",
+            log_detail=f"Updated {len(published)} Imported Concepts without reasoning.",
+        )
+        if conflicts:
+            _write_reconciliation(output, staging, state, [], state.generation, conflicts)
+            raise ReconciliationRequired(str(output.parent / f"{output.name}.reconciliation.md"))
+        with processing_phase(timing, "Atomic publication"):
+            publish_staging(staging, output)
     return True
 
 

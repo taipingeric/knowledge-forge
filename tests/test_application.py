@@ -111,6 +111,42 @@ def test_generate_imports_marked_okf_bundle_without_model_or_agent(
     assert load_baseline(output, "concepts/original").raw_markdown == original
 
 
+def test_update_imported_concept_from_source_without_reasoning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "import"
+    (source / "concepts").mkdir(parents=True)
+    (source / "index.md").write_text('---\nokf_version: "0.2"\n---\n# Source\n')
+    original = "---\ntype: Policy\n---\n\n# Policy\n\nOriginal\n"
+    changed = original.replace("Original", "Updated source")
+    path = source / "concepts" / "policy.md"
+    path.write_text(original)
+    output = tmp_path / "knowledge"
+    application.generate(
+        source=source,
+        output=output,
+        model="",
+        api_key="",
+        base_url=None,
+        language="auto",
+        max_agent_steps=0,
+    )
+    path.write_text(changed)
+    monkeypatch.setattr(application, "_run_agent", lambda **_: pytest.fail("must not reason"))
+
+    assert application.update(
+        source=source,
+        output=output,
+        model="",
+        api_key="",
+        base_url=None,
+        language="auto",
+        max_agent_steps=0,
+    )
+    assert (output / "concepts" / "policy.md").read_text() == changed
+    assert load_baseline(output, "concepts/policy").raw_markdown == changed
+
+
 def test_generate_imports_multiple_nested_okf_boundaries_without_reasoning(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -431,16 +467,16 @@ def test_agent_backed_update_reports_reasoning_and_each_synthesis_phase(
 
     with pytest.raises(StalenessDetected):
         application.update(
-        source=source_dir,
-        output=output,
-        model="fake-model",
-        api_key="secret",
-        base_url="https://models.example/v1",
-        language="auto",
-        max_agent_steps=50,
-        progress=progress.append,
-        timing=ProcessingTimer(progress.append, TickingClock()),
-    )
+            source=source_dir,
+            output=output,
+            model="fake-model",
+            api_key="secret",
+            base_url="https://models.example/v1",
+            language="auto",
+            max_agent_steps=50,
+            progress=progress.append,
+            timing=ProcessingTimer(progress.append, TickingClock()),
+        )
 
     assert completed_phases(progress) == ["Current Bundle validation", "Knowledge Source reading"]
 
@@ -508,14 +544,14 @@ def test_update_wires_the_live_bundle_path_into_the_reasoning_agent(
 
     with pytest.raises(StalenessDetected):
         application.update(
-        source=source_dir,
-        output=output,
-        model="fake-model",
-        api_key="secret",
-        base_url="https://models.example/v1",
-        language="auto",
-        max_agent_steps=50,
-    )
+            source=source_dir,
+            output=output,
+            model="fake-model",
+            api_key="secret",
+            base_url="https://models.example/v1",
+            language="auto",
+            max_agent_steps=50,
+        )
 
     assert captured == {}
 
@@ -569,16 +605,16 @@ def test_update_tool_call_mode_change_bypasses_fast_path_and_updates_identity(
 
     with pytest.raises(StalenessDetected):
         application.update(
-        source=source_dir,
-        output=output,
-        model="fake-model",
-        api_key="secret",
-        base_url="https://models.example/v1",
-        language="auto",
-        max_agent_steps=50,
-        parallel_tool_calls=False,
-        progress=progress.append,
-    )
+            source=source_dir,
+            output=output,
+            model="fake-model",
+            api_key="secret",
+            base_url="https://models.example/v1",
+            language="auto",
+            max_agent_steps=50,
+            parallel_tool_calls=False,
+            progress=progress.append,
+        )
 
     assert observed_modes == []
     assert (tmp_path / "knowledge.staleness.md").is_file()
