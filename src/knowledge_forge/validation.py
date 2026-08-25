@@ -90,12 +90,25 @@ def _validate_reserved_file(path: Path, relative: str) -> list[str]:
     return errors
 
 
-def validate_portable_bundle(bundle: Path) -> None:
+def validate_portable_bundle(bundle: Path, *, allow_nested_boundaries: bool = False) -> None:
     """Validate the portable OKF v0.2 contract without private Forge state."""
     if not bundle.is_dir():
         raise ValidationFailure(f"Bundle directory does not exist: {bundle}")
     errors = _validate_root_index(bundle / "index.md")
+    nested_roots: set[Path] = set()
+    if allow_nested_boundaries:
+        for index in bundle.rglob("index.md"):
+            if index.parent == bundle:
+                continue
+            try:
+                metadata, _ = parse_markdown(index.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, ValidationFailure):
+                continue
+            if metadata == {"okf_version": "0.2"}:
+                nested_roots.add(index.parent)
     for path in sorted(bundle.rglob("*.md")):
+        if any(root in path.parents for root in nested_roots):
+            continue
         relative = path.relative_to(bundle).as_posix()
         if relative.startswith(".knowledge-forge/"):
             continue
@@ -157,9 +170,11 @@ def validate_bundle(
         errors.append("index.md is not the deterministic index for the current Concept set")
 
     for concept_id, raw in concepts.items():
-        if not re.fullmatch(r"concepts/[a-z0-9]+(?:-[a-z0-9]+)*", concept_id):
-            errors.append(f"Invalid Concept ID: {concept_id}")
         concept_state = state.concepts.get(concept_id)
+        if (concept_state is None or concept_state.ownership != "imported") and not re.fullmatch(
+            r"concepts/[a-z0-9]+(?:-[a-z0-9]+)*", concept_id
+        ):
+            errors.append(f"Invalid Concept ID: {concept_id}")
         if concept_state is not None and concept_state.ownership == "imported":
             errors.extend(validate_portable_concept(raw, concept_id))
         else:

@@ -111,6 +111,59 @@ def test_generate_imports_marked_okf_bundle_without_model_or_agent(
     assert load_baseline(output, "concepts/original").raw_markdown == original
 
 
+def test_generate_imports_multiple_nested_okf_boundaries_without_reasoning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "imports"
+    for root, concept_id, title in [
+        (source / "first", "concepts/first", "First"),
+        (source / "first" / "nested", "guides/nested", "Nested"),
+        (source / "second", "concepts/second", "Second"),
+    ]:
+        root.mkdir(parents=True, exist_ok=True)
+        (root / "index.md").write_text('---\nokf_version: "0.2"\n---\n# Navigation\n')
+        concept = root / f"{concept_id}.md"
+        concept.parent.mkdir(parents=True, exist_ok=True)
+        concept.write_text(f"---\ntype: {title} Type\n---\n\n# {title}\n")
+    monkeypatch.setattr(application, "_run_agent", lambda **_: pytest.fail("must not reason"))
+    output = tmp_path / "knowledge"
+
+    application.generate(
+        source=source,
+        output=output,
+        model="",
+        api_key="",
+        base_url=None,
+        language="auto",
+        max_agent_steps=0,
+    )
+
+    assert (output / "concepts/first.md").is_file()
+    assert (output / "guides/nested.md").is_file()
+    assert (output / "concepts/second.md").is_file()
+    assert not (output / "nested" / "guides/nested.md").exists()
+
+
+def test_generate_rejects_colliding_imported_concept_ids(tmp_path: Path) -> None:
+    source = tmp_path / "imports"
+    for name in ("one", "two"):
+        root = source / name
+        root.mkdir(parents=True)
+        (root / "index.md").write_text('---\nokf_version: "0.2"\n---\n# Navigation\n')
+        (root / "concept.md").write_text("---\ntype: Policy\n---\n\n# Policy\n")
+
+    with pytest.raises(ValidationFailure, match="Imported Concept ID collision"):
+        application.generate(
+            source=source,
+            output=tmp_path / "knowledge",
+            model="",
+            api_key="",
+            base_url=None,
+            language="auto",
+            max_agent_steps=0,
+        )
+
+
 class TickingClock:
     def __init__(self) -> None:
         self.current = -1.0

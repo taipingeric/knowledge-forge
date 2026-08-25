@@ -364,23 +364,36 @@ def generate(
 
 
 def _recognized_import_concepts(source: Path) -> dict[str, str] | None:
-    """Return a portable-valid marked Bundle's Concepts, or None for ordinary sources."""
-    index = source / "index.md"
-    if not index.is_file():
+    """Return Concepts from all portable-valid marked Bundle boundaries."""
+    roots: list[Path] = []
+    for index in sorted(source.rglob("index.md")):
+        try:
+            metadata, _ = parse_markdown(index.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, ValidationFailure):
+            continue
+        if metadata == {"okf_version": "0.2"}:
+            roots.append(index.parent)
+    if not roots:
         return None
-    try:
-        metadata, _ = parse_markdown(index.read_text(encoding="utf-8"))
-    except ValidationFailure:
-        return None
-    if metadata != {"okf_version": "0.2"}:
-        return None
-    validate_portable_bundle(source)
+    for root in roots:
+        validate_portable_bundle(root, allow_nested_boundaries=True)
     concepts: dict[str, str] = {}
+    origins: dict[str, Path] = {}
     for path in sorted(source.rglob("*.md")):
+        ancestors = [root for root in roots if root == path.parent or root in path.parents]
+        if not ancestors:
+            continue
+        boundary = max(ancestors, key=lambda root: len(root.parts))
         if path.name in {"index.md", "log.md"} or ".knowledge-forge" in path.parts:
             continue
-        concept_id = path.relative_to(source).with_suffix("").as_posix()
+        concept_id = path.relative_to(boundary).with_suffix("").as_posix()
+        if concept_id in concepts:
+            raise ValidationFailure(
+                "Imported Concept ID collision "
+                f"{concept_id!r}: {origins[concept_id]} and {boundary}"
+            )
         concepts[concept_id] = path.read_text(encoding="utf-8")
+        origins[concept_id] = boundary
     return concepts
 
 
