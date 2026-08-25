@@ -1,4 +1,4 @@
-"""Read-only detection and reporting of changed referenced PDF evidence."""
+"""Read-only detection and reporting of changed referenced typed evidence."""
 
 from __future__ import annotations
 
@@ -8,11 +8,15 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+from pydantic import TypeAdapter
+
 from .errors import ValidationFailure
-from .models import ForgeState, GenerationIdentity, KnowledgeSource
+from .models import EvidenceLocator, ForgeState, GenerationIdentity, KnowledgeSource
 from .okf import parse_markdown, source_reference_identity
 from .sources import sha256_text
 from .state import public_concepts
+
+evidence_locator_adapter = TypeAdapter(EvidenceLocator)
 
 
 def detect_staleness(
@@ -32,16 +36,20 @@ def detect_staleness(
             reference_id = entry.get("id")
             source_id = source_reference_identity(str(reference_id))
             locator = entry.get("locator")
-            if (
-                source_id is None
-                or not isinstance(locator, dict)
-                or not isinstance(locator.get("page"), int)
-            ):
+            if source_id is None or not isinstance(locator, dict):
                 continue
             source = current.get(source_id)
-            page = locator["page"]
             previous = str(entry.get("evidence_sha256", entry.get("content_sha256", "")))
-            if source is None or page > len(source.evidence):
+            try:
+                typed_locator = evidence_locator_adapter.validate_python(locator)
+            except (TypeError, ValueError):
+                continue
+            evidence = (
+                next((unit for unit in source.evidence if unit.locator == typed_locator), None)
+                if source is not None
+                else None
+            )
+            if evidence is None:
                 stale.append(
                     {
                         "concept_id": concept_id,
@@ -53,7 +61,7 @@ def detect_staleness(
                     }
                 )
             else:
-                current_hash = sha256_text(source.evidence[page - 1].text)
+                current_hash = sha256_text(evidence.text)
                 if current_hash != previous:
                     stale.append(
                         {
