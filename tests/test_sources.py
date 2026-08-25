@@ -122,11 +122,10 @@ def test_extract_sources_rejects_invalid_markdown_before_agent(
         extract_sources(tmp_path)
 
 
-def test_extract_sources_rejects_marked_okf_root(tmp_path: Path) -> None:
+def test_extract_sources_excludes_marked_okf_root_from_ordinary_evidence(tmp_path: Path) -> None:
     (tmp_path / "index.md").write_text('---\nokf_version: "0.2"\n---\n# Imported\n')
 
-    with pytest.raises(ValidationFailure, match="not-yet-supported import"):
-        extract_sources(tmp_path)
+    assert extract_sources(tmp_path) == []
 
 
 def test_pdf_source_exposes_typed_evidence_through_generalized_contract() -> None:

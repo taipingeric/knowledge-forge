@@ -18,6 +18,7 @@ class SourceKind(StrEnum):
 
     PDF = "pdf"
     MARKDOWN = "markdown"
+    IMPORTED_CONCEPT = "imported_concept"
 
 
 class PDFPageLocator(BaseModel):
@@ -36,7 +37,16 @@ class MarkdownBlockLocator(BaseModel):
     content_sha256: str
 
 
-EvidenceLocator = PDFPageLocator | MarkdownBlockLocator
+class ImportedConceptLocator(BaseModel):
+    """Locate a preserved Imported Concept and bind its upstream provenance."""
+
+    kind: Literal["imported_concept"] = "imported_concept"
+    concept_id: str
+    content_sha256: str
+    upstream_sources: list[dict[str, object]] = Field(default_factory=list)
+
+
+EvidenceLocator = PDFPageLocator | MarkdownBlockLocator | ImportedConceptLocator
 
 
 class EvidenceUnit(BaseModel):
@@ -95,6 +105,12 @@ class MarkdownSource(KnowledgeSource):
     """Represent an ordinary Markdown Knowledge Source and structural evidence blocks."""
 
     kind: Literal[SourceKind.MARKDOWN] = SourceKind.MARKDOWN
+
+
+class ImportedConceptSource(KnowledgeSource):
+    """Represent an Imported Concept used only as reasoning context."""
+
+    kind: Literal[SourceKind.IMPORTED_CONCEPT] = SourceKind.IMPORTED_CONCEPT
 
 
 class Evidence(BaseModel):
@@ -221,6 +237,7 @@ class ForgeState(BaseModel):
     integrity_hash: str = ""
     generation: GenerationIdentity
     source_set_hash: str
+    imported_set_hash: str = ""
     sources: dict[str, SourceState]
     bundle_hash: str
     tool_files: dict[str, str]

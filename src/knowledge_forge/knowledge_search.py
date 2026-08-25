@@ -45,6 +45,8 @@ def search_concepts(
                 {
                     "concept_id": concept_id,
                     "title": title,
+                    "metadata": metadata,
+                    "content": raw,
                     "snippet": _snippet(body, keywords, snippet_radius),
                 }
             )

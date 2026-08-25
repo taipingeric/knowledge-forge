@@ -302,6 +302,11 @@ def test_search_knowledge_tool_finds_existing_concepts_in_the_bundle(tmp_path: P
         {
             "concept_id": "concepts/mvcc",
             "title": "MVCC",
+            "metadata": {"type": "Concept", "title": "MVCC", "description": "d"},
+            "content": (
+                "---\ntype: Concept\ntitle: MVCC\ndescription: d\n---\n\n"
+                "Snapshots avoid blocking readers.\n"
+            ),
             "snippet": "Snapshots avoid blocking readers.",
         }
     ]

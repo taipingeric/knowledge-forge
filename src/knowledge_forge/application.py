@@ -18,8 +18,11 @@ from .models import (
     ConceptState,
     ConditionalOverride,
     Conflict,
+    EvidenceUnit,
     ForgeState,
     GenerationIdentity,
+    ImportedConceptLocator,
+    ImportedConceptSource,
     KnowledgeSource,
     ReconciliationManifest,
     ResolutionFile,
@@ -102,6 +105,39 @@ def _source_states(sources: list[KnowledgeSource]) -> dict[str, SourceState]:
         )
         for source in sources
     }
+
+
+def _imported_reasoning_sources(concepts: dict[str, str]) -> list[KnowledgeSource]:
+    """Build ephemeral typed evidence sources for Imported Concept reasoning."""
+
+    result: list[KnowledgeSource] = []
+    for concept_id, raw in concepts.items():
+        metadata, _ = parse_markdown(raw)
+        locator = ImportedConceptLocator(
+            concept_id=concept_id,
+            content_sha256=sha256_text(raw),
+            upstream_sources=(
+                list(metadata["sources"]) if isinstance(metadata.get("sources"), list) else []
+            ),
+        )
+        result.append(
+            ImportedConceptSource(
+                id=f"imported/{concept_id}",
+                resource=f"urn:knowledge-forge:imported:{concept_id}",
+                content_sha256=sha256_text(raw),
+                evidence=[EvidenceUnit(locator=locator, text=raw)],
+            )
+        )
+    return result
+
+
+def _imported_concepts_hash(concepts: dict[str, str]) -> str:
+    """Hash Imported Concept identities and exact content for managed staleness checks."""
+
+    material = "\n".join(
+        f"{concept_id}\0{sha256_text(raw)}" for concept_id, raw in sorted(concepts.items())
+    )
+    return sha256_text(material)
 
 
 def _source_dependencies(raw: str) -> dict[str, str]:
@@ -251,6 +287,13 @@ def _write_bundle(
     state = ForgeState(
         generation=generation,
         source_set_hash=source_set_hash(sources),
+        imported_set_hash=_imported_concepts_hash(
+            {
+                concept_id: raw
+                for concept_id, raw in concepts.items()
+                if ownership[concept_id] == "imported"
+            }
+        ),
         sources=_source_states(sources),
         bundle_hash="",
         tool_files={
@@ -349,7 +392,7 @@ def generate(
     source, output = resolve_disjoint_trees(source, output)
     reject_tracing()
     imported = _recognized_import_concepts(source)
-    if imported is not None:
+    if imported is not None and not extract_sources(source):
         with output_lock(output.resolve()):
             _generate_import_locked(source, output, imported, progress=progress, timing=timing)
         return
@@ -451,6 +494,7 @@ def _generate_locked(
     generation: GenerationIdentity,
     progress: Callable[[str], None] | None = None,
     timing: ProcessingTimer | None = None,
+    imported: dict[str, str] | None = None,
 ) -> None:
     """Build and publish a new Bundle while the caller holds the output lock."""
 
@@ -464,16 +508,32 @@ def _generate_locked(
         sources = extract_sources(source)
     evidence_count = sum(len(item.evidence) for item in sources)
     report(f"Loaded {len(sources)} Knowledge Sources with {evidence_count} evidence units.")
-    concepts, output_language = _run_agent(
-        sources=sources,
-        generation=generation,
-        api_key=api_key,
-        existing_ids=[],
-        output=output,
-        progress=progress,
-        timing=timing,
-    )
+    imported = imported or _recognized_import_concepts(source) or {}
+    reasoning_sources = [*sources, *_imported_reasoning_sources(imported)]
+    context = Path(tempfile.mkdtemp(prefix="knowledge-forge-import-context-"))
+    try:
+        for concept_id, raw in imported.items():
+            path = context / f"{concept_id}.md"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(raw, encoding="utf-8")
+        concepts, output_language = _run_agent(
+            sources=reasoning_sources,
+            generation=generation,
+            api_key=api_key,
+            existing_ids=sorted(imported),
+            output=context if imported else output,
+            progress=progress,
+            timing=timing,
+        )
+    finally:
+        shutil.rmtree(context, ignore_errors=True)
     generation.output_language = output_language
+    collisions = sorted(set(concepts) & set(imported))
+    if collisions:
+        raise ValidationFailure(
+            "Generated Concept collides with Imported Concept: " + ", ".join(collisions)
+        )
+    concepts = {**imported, **concepts}
     report("Writing and validating the candidate bundle...")
     with staged_bundle(output, copy_existing=False) as staging:
         with processing_phase(timing, "Candidate Bundle writing and validation"):
@@ -481,7 +541,10 @@ def _generate_locked(
                 staging,
                 concepts=concepts,
                 baselines=concepts,
-                ownership={concept_id: "agent" for concept_id in concepts},
+                ownership={
+                    concept_id: "imported" if concept_id in imported else "agent"
+                    for concept_id in concepts
+                },
                 sources=sources,
                 generation=generation,
                 previous_state=None,
@@ -608,7 +671,7 @@ def _update_locked(
     with processing_phase(timing, "Current Bundle validation"):
         state = validate_bundle(output, for_mutation=True)
     imported = _recognized_import_concepts(source)
-    if imported is not None:
+    if imported is not None and not extract_sources(source):
         return _update_import_locked(output, state, imported, report, timing)
     report("Reading Knowledge Sources...")
     with processing_phase(timing, "Knowledge Source reading"):
@@ -623,6 +686,7 @@ def _update_locked(
         parallel_tool_calls=parallel_tool_calls,
         concept_concurrency=state.generation.concept_concurrency,
     )
+    imported_hash = _imported_concepts_hash(imported or {})
     source_hash = source_set_hash(sources)
     regeneration_report: dict[str, object] | None = None
     if regenerate_all:
@@ -676,7 +740,10 @@ def _update_locked(
         source_unchanged = source_hash == state.source_set_hash
         generation_unchanged = _same_generation_request(identity, state.generation)
         no_changes = (
-            source_unchanged and generation_unchanged and bundle_hash(output) == state.bundle_hash
+            source_unchanged
+            and imported_hash == state.imported_set_hash
+            and generation_unchanged
+            and bundle_hash(output) == state.bundle_hash
         )
     if no_changes:
         report("The source set and bundle are unchanged.")
@@ -698,11 +765,16 @@ def _update_locked(
                 if owner == "agent" and concept_id in state.concepts
             }
     else:
+        reasoning_sources = [*sources, *_imported_reasoning_sources(imported or {})]
         candidates, output_language = _run_agent(
-            sources=sources,
+            sources=reasoning_sources,
             generation=identity,
             api_key=api_key,
-            existing_ids=sorted(current),
+            existing_ids=sorted(
+                concept_id
+                for concept_id, concept_state in state.concepts.items()
+                if concept_state.ownership in {"imported", "human"}
+            ),
             output=output,
             progress=progress,
             timing=timing,
@@ -717,7 +789,55 @@ def _update_locked(
         for concept_id, owner in ownership.items():
             human_raw = current.get(concept_id)
             candidate_raw = candidates.get(concept_id)
+            if owner == "imported":
+                imported_candidate = (imported or {}).get(concept_id)
+                if imported_candidate is None:
+                    if human_raw is not None:
+                        baseline = load_baseline(output, concept_id).raw_markdown
+                        if human_raw == baseline:
+                            continue
+                        if human_raw != baseline:
+                            conflicts.append(
+                                Conflict(
+                                    id=sha256_text(f"{concept_id}\0import-withdrawal")[:16],
+                                    concept_id=concept_id,
+                                    block_id="document:source-removal",
+                                    baseline=baseline,
+                                    human=human_raw,
+                                    reason="An Imported Concept was withdrawn with a Human Delta.",
+                                )
+                            )
+                        published[concept_id] = human_raw
+                        baselines[concept_id] = baseline
+                    continue
+                baseline = load_baseline(output, concept_id).raw_markdown
+                result = merge_concept(
+                    concept_id,
+                    baseline,
+                    human_raw or baseline,
+                    imported_candidate,
+                    _evidence_from_raw(imported_candidate),
+                )
+                conflicts.extend(result.conflicts)
+                published[concept_id] = result.markdown
+                baselines[concept_id] = imported_candidate
+                continue
             if owner == "human":
+                imported_candidate = (imported or {}).get(concept_id)
+                if imported_candidate is not None:
+                    conflicts.append(
+                        Conflict(
+                            id=sha256_text(f"{concept_id}\0import-ownership")[:16],
+                            concept_id=concept_id,
+                            block_id="ownership",
+                            human=human_raw,
+                            candidate=imported_candidate,
+                            evidence=_evidence_from_raw(imported_candidate),
+                            reason="An Imported Concept collides with a Human-owned Concept.",
+                        )
+                    )
+                    published[concept_id] = human_raw or ""
+                    continue
                 prior = state.concepts.get(concept_id)
                 if prior and prior.deleted:
                     if candidate_raw is None:
@@ -812,6 +932,11 @@ def _update_locked(
             published[concept_id] = merged
             baselines[concept_id] = candidate_raw
 
+        for concept_id, candidate_raw in (imported or {}).items():
+            if concept_id not in ownership:
+                published[concept_id] = candidate_raw
+                baselines[concept_id] = candidate_raw
+                ownership[concept_id] = "imported"
         for concept_id, candidate_raw in candidates.items():
             if concept_id not in ownership:
                 published[concept_id] = candidate_raw
@@ -1092,8 +1217,7 @@ def _reconcile_locked(*, source: Path, output: Path, resolution_path: Path) -> N
     resolutions = ResolutionFile.model_validate(
         yaml.safe_load(resolution_path.read_text(encoding="utf-8"))
     )
-    imported = _recognized_import_concepts(source)
-    sources = [] if imported is not None else extract_sources(source)
+    sources = extract_sources(source)
     pending = work / "pending"
     if manifest.output_path != str(output):
         raise ValidationFailure("Reconciliation output path does not match the manifest")

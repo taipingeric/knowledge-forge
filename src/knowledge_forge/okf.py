@@ -14,6 +14,7 @@ from .models import (
     CONCEPT_TYPES,
     ConceptDraft,
     EvidenceLocator,
+    ImportedConceptLocator,
     KnowledgeSource,
     MarkdownBlockLocator,
 )
@@ -99,20 +100,27 @@ def source_reference_id(source_identity: str, locator: EvidenceLocator | int) ->
             json.dumps([locator.heading_path, locator.occurrence], separators=(",", ":"))
         )
         return f"{quote(source_identity, safe='/')}#markdown_block:{address}"
+    if isinstance(locator, ImportedConceptLocator):
+        return (
+            f"{quote(source_identity, safe='/')}#imported_concept:"
+            f"{quote(locator.concept_id, safe='')}"
+        )
     return f"{quote(source_identity, safe='/')}#pdf_page:{locator.page}"
 
 
 def source_reference_identity(reference_id: str) -> str | None:
     """Return the Source Identity encoded in a typed Source Reference ID."""
-    match = re.fullmatch(r"(.+)#(?:pdf_page:[1-9][0-9]*|markdown_block:.+)", reference_id)
+    match = re.fullmatch(
+        r"(.+)#(?:pdf_page:[1-9][0-9]*|markdown_block:.+|imported_concept:.+)", reference_id
+    )
     return unquote(match.group(1)) if match else None
 
 
-def _locator_hash(page: int) -> str:
-    """Hash a normalized PDF page locator for provenance integrity checks."""
+def _locator_hash(locator: dict[str, Any]) -> str:
+    """Hash a normalized typed locator for provenance integrity checks."""
 
-    locator = json.dumps({"kind": "pdf_page", "page": page}, sort_keys=True, separators=(",", ":"))
-    return sha256_text(locator)
+    serialized = json.dumps(locator, sort_keys=True, separators=(",", ":"))
+    return sha256_text(serialized)
 
 
 def render_concept(
@@ -493,7 +501,7 @@ def validate_concept(
         return [f"{concept_id}: {exc}"]
     if metadata.get("type") not in CONCEPT_TYPES:
         errors.append(f"{concept_id}: unsupported type {metadata.get('type')!r}")
-    source_references: dict[str, tuple[str, int]] = {}
+    source_references: set[str] = set()
     source_entries = metadata.get("sources", [])
     if not isinstance(source_entries, list):
         errors.append(f"{concept_id}: sources must be a list")
@@ -511,40 +519,61 @@ def validate_concept(
         if not _non_empty_string(reference_id):
             errors.append(f"{concept_id}: source reference ID must be a non-empty string")
             continue
-        if (
-            not isinstance(locator, dict)
-            or locator.get("kind") != "pdf_page"
-            or not isinstance(locator.get("page"), int)
-            or locator["page"] < 1
-        ):
+        if not isinstance(locator, dict) or not isinstance(locator.get("kind"), str):
             errors.append(
-                f"{concept_id}: source reference {reference_id} has an invalid PDF page locator"
+                f"{concept_id}: source reference {reference_id} has an invalid typed locator"
             )
             continue
-        page = locator["page"]
+        if locator["kind"] == "pdf_page" and (
+            not isinstance(locator.get("page"), int) or locator["page"] < 1
+        ):
+            errors.append(f"{concept_id}: invalid PDF page locator {reference_id}")
+            continue
+        if locator["kind"] == "imported_concept" and not _non_empty_string(
+            locator.get("concept_id")
+        ):
+            errors.append(f"{concept_id}: invalid Imported Concept locator {reference_id}")
+            continue
         source_id = source_reference_identity(reference_id)
         if source_id is None:
             errors.append(f"{concept_id}: invalid source reference ID {reference_id}")
             continue
-        if reference_id != source_reference_id(source_id, page):
+        if locator["kind"] == "pdf_page":
+            expected_reference = source_reference_id(source_id, locator["page"])
+        elif locator["kind"] == "markdown_block":
+            expected_reference = source_reference_id(
+                source_id, MarkdownBlockLocator.model_validate(locator)
+            )
+        else:
+            expected_reference = source_reference_id(
+                source_id, ImportedConceptLocator.model_validate(locator)
+            )
+        if reference_id != expected_reference:
             errors.append(
                 f"{concept_id}: source reference ID does not match its locator for {reference_id}"
             )
         if reference_id in source_references:
             errors.append(f"{concept_id}: duplicate source reference {reference_id}")
             continue
-        source_references[reference_id] = (source_id, page)
-        expected_resource = f"urn:knowledge-forge:pdf:{quote(source_id, safe='')}"
+        source_references.add(reference_id)
+        if locator["kind"] == "pdf_page":
+            expected_resource = f"urn:knowledge-forge:pdf:{quote(source_id, safe='')}"
+        elif locator["kind"] == "markdown_block":
+            expected_resource = f"urn:knowledge-forge:markdown:{quote(source_id, safe='')}"
+        else:
+            expected_resource = (
+                f"urn:knowledge-forge:imported:{source_id.removeprefix('imported/')}"
+            )
         if entry["resource"] != expected_resource:
             errors.append(f"{concept_id}: invalid logical resource for {reference_id}")
         if not re.fullmatch(r"[0-9a-f]{64}", str(entry["content_sha256"])):
             errors.append(f"{concept_id}: invalid document SHA-256 for {reference_id}")
-        if entry["locator_sha256"] != _locator_hash(page):
+        if entry["locator_sha256"] != _locator_hash(locator):
             errors.append(f"{concept_id}: invalid locator SHA-256 for {reference_id}")
-        if source_pages is not None:
+        if source_pages is not None and locator["kind"] != "imported_concept":
             if source_id not in source_pages:
                 errors.append(f"{concept_id}: source reference is outside referenced evidence")
-            elif page > source_pages[source_id]:
+            elif locator["kind"] == "pdf_page" and locator["page"] > source_pages[source_id]:
                 errors.append(f"{concept_id}: page outside source bounds for {reference_id}")
     citations = list(dict.fromkeys(PORTABLE_FOOTNOTE_REFERENCE.findall(body)))
     definitions = set(FOOTNOTE_DEFINITION.findall(body))

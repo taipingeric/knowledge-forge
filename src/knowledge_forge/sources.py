@@ -86,7 +86,7 @@ def extract_sources(root: Path) -> list[KnowledgeSource]:
         source_id = unicodedata.normalize("NFC", path.relative_to(root).as_posix())
         try:
             if any(parent == path.parent or parent in path.parents for parent in marked_roots):
-                raise ValueError("not-yet-supported import boundary")
+                continue
             if path.suffix.casefold() == ".md":
                 raw = path.read_bytes()
                 try:
@@ -126,6 +126,8 @@ def extract_sources(root: Path) -> list[KnowledgeSource]:
             failures.append(f"{source_id}: {exc}")
     if failures:
         raise ValidationFailure("Invalid Knowledge Source set:\n- " + "\n- ".join(failures))
+    if not sources and not marked_roots:
+        raise ValidationFailure(f"No Knowledge Source files found under: {root}")
     return sources
 
 
@@ -286,7 +288,7 @@ class EvidenceIndex:
         if not locators:
             return []
         typed_locators = [
-            locator if isinstance(locator, PDFPageLocator) else PDFPageLocator(page=locator)
+            PDFPageLocator(page=locator) if isinstance(locator, int) else locator
             for locator in locators
         ]
         serialized = [

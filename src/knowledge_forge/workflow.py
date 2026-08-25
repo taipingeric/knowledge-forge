@@ -61,6 +61,14 @@ def build_workflow(
         slugs = [concept.slug for concept in result.concepts]
         if len(slugs) != len(set(slugs)):
             raise ValidationFailure("Agent planned duplicate Concept slugs")
+        reserved_slugs = {
+            concept_id.removeprefix("concepts/") for concept_id in state.get("existing_ids", [])
+        }
+        collisions = sorted(set(slugs) & reserved_slugs)
+        if collisions:
+            raise ValidationFailure(
+                "Agent planned Concepts that already exist: " + ", ".join(collisions)
+            )
         report(f"Planned {len(result.concepts)} concepts in {result.language}.")
         return {"plan": result, "language": result.language}
 
