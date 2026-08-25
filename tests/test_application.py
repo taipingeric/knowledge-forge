@@ -147,6 +147,41 @@ def test_update_imported_concept_from_source_without_reasoning(
     assert load_baseline(output, "concepts/policy").raw_markdown == changed
 
 
+def test_verify_preserves_imported_trust_and_records_only_local_event(tmp_path: Path) -> None:
+    source = tmp_path / "import"
+    (source / "concepts").mkdir(parents=True)
+    (source / "index.md").write_text('---\nokf_version: "0.2"\n---\n# Source\n')
+    original = (
+        "---\ntype: Policy\ngenerated: {by: upstream:agent, at: 2026-01-01T00:00:00Z}\n"
+        "verified: {by: upstream:reviewer, at: 2026-01-02T00:00:00Z}\n"
+        "status: stable\nstale_after: 2027-01-01\ntrust_extension: preserve\n---\n\n# Policy\n"
+    )
+    (source / "concepts" / "policy.md").write_text(original)
+    output = tmp_path / "knowledge"
+    application.generate(
+        source=source,
+        output=output,
+        model="",
+        api_key="",
+        base_url=None,
+        language="auto",
+        max_agent_steps=0,
+    )
+
+    application.verify(
+        source=source,
+        output=output,
+        concept_id="concepts/policy",
+        actor="human:local",
+    )
+
+    metadata, _ = parse_markdown((output / "concepts/policy.md").read_text())
+    assert [item["by"] for item in metadata["verified"]] == ["upstream:reviewer", "human:local"]
+    state = load_state(output)
+    assert [event.by for event in state.verification_history] == ["human:local"]
+    assert state.concepts["concepts/policy"].imported_trust["status"] == "stable"
+
+
 def test_generate_imports_multiple_nested_okf_boundaries_without_reasoning(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

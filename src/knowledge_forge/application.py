@@ -230,6 +230,15 @@ def _write_bundle(
             baseline_hash=baseline_hashes.get(concept_id),
             source_dependencies=_source_dependencies(raw),
             managed_fields_hash=managed_fields_hash(raw),
+            imported_trust=(
+                {
+                    key: value
+                    for key, value in parse_markdown(raw)[0].items()
+                    if key in {"generated", "verified", "status", "stale_after"}
+                }
+                if ownership[concept_id] == "imported"
+                else None
+            ),
         )
         for concept_id, raw in concepts.items()
     }
@@ -873,7 +882,14 @@ def _update_import_locked(
             concept_id, baseline, human, candidate, _evidence_from_raw(candidate)
         )
         conflicts.extend(result.conflicts)
-        published[concept_id] = _preserve_verification(human, result.markdown)
+        merged = _preserve_verification(human, result.markdown)
+        if prior.imported_trust and "verified" in prior.imported_trust:
+            candidate_metadata, _ = parse_markdown(candidate)
+            if "verified" not in candidate_metadata:
+                metadata, body = parse_markdown(merged)
+                metadata["verified"] = prior.imported_trust["verified"]
+                merged = dump_markdown(metadata, body)
+        published[concept_id] = merged
         baselines[concept_id] = candidate
     report("Merging imported Concepts and detecting Reconciliation Conflicts...")
     with staged_bundle(output, copy_existing=True) as staging:
@@ -1190,8 +1206,13 @@ def _verify_locked(*, source: Path, output: Path, concept_id: str, actor: str) -
             publish_staging(staging, output)
             return
     output = output.resolve()
-    sources = extract_sources(source)
-    state = validate_bundle(output, sources, for_mutation=True)
+    state = validate_bundle(output, for_mutation=True)
+    sources = (
+        []
+        if state.concepts and all(item.ownership == "imported" for item in state.concepts.values())
+        else extract_sources(source)
+    )
+    validate_bundle(output, sources, for_mutation=True)
     concepts = public_concepts(output)
     missing = [
         concept_id
@@ -1213,7 +1234,8 @@ def _verify_locked(*, source: Path, output: Path, concept_id: str, actor: str) -
         item.concept_id == normalized_id and item.version_hash == current_version
         for item in state.verification_history
     )
-    existing = metadata.get("verified", []) if version_was_verified else []
+    imported = state.concepts[normalized_id].ownership == "imported"
+    existing = metadata.get("verified", []) if imported or version_was_verified else []
     if isinstance(existing, dict):
         existing = [existing]
     metadata["verified"] = [*existing, event]
@@ -1230,7 +1252,7 @@ def _verify_locked(*, source: Path, output: Path, concept_id: str, actor: str) -
     baselines = {
         concept_id: load_baseline(output, concept_id).raw_markdown
         for concept_id, owner in ownership.items()
-        if owner == "agent"
+        if owner in {"agent", "imported"}
     }
     deleted = {
         concept_id: item.deletion_candidate_hash or ""

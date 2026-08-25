@@ -186,6 +186,7 @@ class ConceptState(BaseModel):
     baseline_hash: str | None = None
     source_dependencies: dict[str, str] = Field(default_factory=dict)
     managed_fields_hash: str | None = None
+    imported_trust: dict[str, object] | None = None
 
 
 class SourceState(BaseModel):
