@@ -15,6 +15,9 @@ from knowledge_forge.models import (
     ConceptDraft,
     ConceptPlan,
     Evidence,
+    EvidenceUnit,
+    ImportedConceptLocator,
+    ImportedConceptSource,
     PDFSource,
     PlannedConcept,
     SourcePage,
@@ -104,6 +107,55 @@ def test_agent_repairs_semantically_invalid_plan(
     assert plan.language == "English"
     assert agent.steps == 2
     assert "Repair the previous invalid result" in fake.prompts[1]
+
+
+def test_agent_plan_includes_imported_metadata_and_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    raw = "---\ntype: Policy\ntitle: Imported policy\n---\n\n# Imported policy\n\nUpstream rule.\n"
+    imported = ImportedConceptSource(
+        id="imported/concepts/policy",
+        resource="urn:knowledge-forge:imported:concepts/policy",
+        content_sha256=sha256_text(raw),
+        evidence=[
+            EvidenceUnit(
+                locator=ImportedConceptLocator(
+                    concept_id="concepts/policy",
+                    content_sha256=sha256_text(raw),
+                ),
+                text=raw,
+            )
+        ],
+    )
+    response = {
+        "language": "English",
+        "concepts": [
+            {
+                "slug": "new-policy",
+                "title": "New policy",
+                "type": "Policy",
+                "description": "A new policy.",
+                "search_queries": ["policy"],
+            }
+        ],
+    }
+    fake = FakeCompiledAgent([response])
+    monkeypatch.setattr(agent_module, "create_agent", lambda **_: fake)
+    with PageIndex(tmp_path / "pages.sqlite") as index:
+        index.add([imported])
+        agent = ReasoningAgent(
+            index=index,
+            sources=[imported],
+            model="fake",
+            api_key="secret",
+            base_url=None,
+            max_steps=5,
+        )
+        agent.plan("English", ["concepts/policy"])
+    assert '"metadata":' in fake.prompts[0]
+    assert "Imported policy" in fake.prompts[0]
+    assert '"content":' in fake.prompts[0]
+    assert "Upstream rule." in fake.prompts[0]
 
 
 def test_agent_budget_stops_repairs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

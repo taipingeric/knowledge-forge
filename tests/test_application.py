@@ -917,6 +917,28 @@ def test_managed_provenance_tampering_fails(
         validate_bundle(output)
 
 
+def test_conflict_evidence_preserves_imported_locator() -> None:
+    locator = {
+        "kind": "imported_concept",
+        "concept_id": "concepts/policy",
+        "content_sha256": "a" * 64,
+        "upstream_sources": [],
+    }
+    raw = dump_markdown(
+        {
+            "sources": [
+                {
+                    "id": "imported/concepts/policy#imported_concept:concepts%2Fpolicy",
+                    "locator": locator,
+                }
+            ]
+        },
+        "# Policy\n",
+    )
+    evidence = application._evidence_from_raw(raw)
+    assert evidence == [{"source_id": "imported/concepts/policy", "locators": [locator]}]
+
+
 def test_manual_verified_metadata_tampering_fails(
     tmp_path: Path, fake_runtime: tuple[list[PDFSource], list[str]]
 ) -> None:

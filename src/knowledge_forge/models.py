@@ -266,6 +266,7 @@ class ReconciliationManifest(BaseModel):
     output_path: str
     live_bundle_hash: str
     source_set_hash: str
+    imported_set_hash: str = ""
     candidate_hash: str
     generation: GenerationIdentity
     conflicts: list[Conflict]

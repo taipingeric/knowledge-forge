@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import yaml
+from pydantic import TypeAdapter
 
 from .agent import ReasoningAgent
 from .errors import ReconciliationRequired, StalenessDetected, ValidationFailure
@@ -18,6 +19,7 @@ from .models import (
     ConceptState,
     ConditionalOverride,
     Conflict,
+    EvidenceLocator,
     EvidenceUnit,
     ForgeState,
     GenerationIdentity,
@@ -164,12 +166,21 @@ def _evidence_from_raw(raw: str) -> list[dict[str, object]]:
             continue
         source_id = source_reference_identity(str(item.get("id", "")))
         locator = item.get("locator")
-        if (
-            source_id is not None
-            and isinstance(locator, dict)
-            and isinstance(locator.get("page"), int)
-        ):
-            evidence.append({"source_id": source_id, "pages": [locator["page"]]})
+        if source_id is None or not isinstance(locator, dict):
+            continue
+        try:
+            typed_locator = TypeAdapter(EvidenceLocator).validate_python(locator)
+        except (TypeError, ValueError):
+            continue
+        if typed_locator.kind == "pdf_page":
+            evidence.append({"source_id": source_id, "pages": [typed_locator.page]})
+        else:
+            evidence.append(
+                {
+                    "source_id": source_id,
+                    "locators": [typed_locator.model_dump(mode="json")],
+                }
+            )
     return evidence
 
 
@@ -1097,6 +1108,7 @@ def _write_reconciliation(
         shutil.rmtree(work)
     pending = work / "pending"
     shutil.copytree(staging, pending)
+    candidate_state = load_state(pending)
     manual = work / "manual"
     for conflict in conflicts:
         concept = pending / f"{conflict.concept_id}.md"
@@ -1108,6 +1120,7 @@ def _write_reconciliation(
         output_path=str(output),
         live_bundle_hash=bundle_hash(output, include_state=True),
         source_set_hash=source_set_hash(sources),
+        imported_set_hash=candidate_state.imported_set_hash,
         candidate_hash=bundle_hash(pending, include_state=True),
         generation=identity,
         conflicts=conflicts,
@@ -1157,6 +1170,13 @@ def _write_reconciliation(
                     [
                         f"- `{item.source_id}` pages " + ", ".join(str(page) for page in item.pages)
                         for item in conflict.evidence
+                        if item.pages
+                    ]
+                    + [
+                        f"- `{item.source_id}` locator "
+                        + json.dumps(locator.model_dump(mode="json"), sort_keys=True)
+                        for item in conflict.evidence
+                        for locator in item.locators
                     ]
                     or ["- No current source evidence; this is an ownership/lifecycle conflict."]
                 ),
@@ -1218,6 +1238,7 @@ def _reconcile_locked(*, source: Path, output: Path, resolution_path: Path) -> N
         yaml.safe_load(resolution_path.read_text(encoding="utf-8"))
     )
     sources = extract_sources(source)
+    imported = _recognized_import_concepts(source) or {}
     pending = work / "pending"
     if manifest.output_path != str(output):
         raise ValidationFailure("Reconciliation output path does not match the manifest")
@@ -1225,6 +1246,11 @@ def _reconcile_locked(*, source: Path, output: Path, resolution_path: Path) -> N
         raise ValidationFailure("Live Bundle changed; run update again")
     if source_set_hash(sources) != manifest.source_set_hash:
         raise ValidationFailure("Source set changed; run update again")
+    if (
+        manifest.imported_set_hash
+        and _imported_concepts_hash(imported) != manifest.imported_set_hash
+    ):
+        raise ValidationFailure("Imported Concept set changed; run update again")
     if bundle_hash(pending, include_state=True) != manifest.candidate_hash:
         raise ValidationFailure("Pending candidate changed outside the resolution workflow")
     choices = {item.conflict_id: item for item in resolutions.resolutions}

@@ -17,8 +17,8 @@ from openai import APIError
 from pydantic import BaseModel
 
 from .errors import SearchQueryFailure, ValidationFailure
-from .models import ConceptDraft, ConceptPlan, KnowledgeSource, PlannedConcept
-from .okf import render_concept, source_reference_id, validate_concept
+from .models import ConceptDraft, ConceptPlan, KnowledgeSource, PlannedConcept, SourceKind
+from .okf import parse_markdown, render_concept, source_reference_id, validate_concept
 from .sources import EvidenceIndex
 from .tools import (
     build_read_evidence_tool,
@@ -226,14 +226,18 @@ class ReasoningAgent:
     def plan(self, language: str, existing_ids: list[str]) -> ConceptPlan:
         """Plan unique cross-document Concepts in the requested Bundle language."""
 
-        manifest = [
-            {
+        manifest = []
+        for source in self._sources.values():
+            item: dict[str, object] = {
                 "id": source.id,
                 "sha256": source.content_sha256,
                 "evidence_units": len(source.evidence),
             }
-            for source in self._sources.values()
-        ]
+            if source.kind == SourceKind.IMPORTED_CONCEPT and source.evidence:
+                metadata, _ = parse_markdown(source.evidence[0].text)
+                item["metadata"] = metadata
+                item["content"] = source.evidence[0].text
+            manifest.append(item)
 
         def validate_plan(plan: ConceptPlan) -> None:
             """Enforce the requested language and unique slugs in an agent plan."""
