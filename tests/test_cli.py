@@ -756,7 +756,7 @@ class FakeTimingAgent:
         )
 
 
-def test_generate_reports_processing_time_without_changing_command_output_or_bundle(
+def test_generate_reports_workflow_diagnostics_without_changing_command_output_or_bundle(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     source = tmp_path / "pdfs"
@@ -789,7 +789,8 @@ def test_generate_reports_processing_time_without_changing_command_output_or_bun
 
     assert result.exit_code == 0
     assert result.stdout.strip() == f"Generated OKF Bundle: {output.resolve()}"
-    assert result.stderr.splitlines() == [
+    stderr = result.stderr.splitlines()
+    expected_messages = [
         "[knowledge-forge] Tool-call mode: parallel.",
         "[knowledge-forge] Reading Knowledge Sources...",
         "[knowledge-forge] Knowledge Source reading completed in 1.000s.",
@@ -808,8 +809,32 @@ def test_generate_reports_processing_time_without_changing_command_output_or_bun
         "[knowledge-forge] Candidate Bundle writing and validation completed in 1.000s.",
         "[knowledge-forge] Publishing the bundle atomically...",
         "[knowledge-forge] Atomic publication completed in 1.000s.",
-        "[knowledge-forge] Total processing time: 15.000s.",
     ]
+    for message in expected_messages:
+        assert message in stderr
+    assert any(
+        message.startswith("[knowledge-forge] LangGraph node plan completed in ")
+        for message in stderr
+    )
+    assert any(
+        message.startswith(
+            "[knowledge-forge] LangGraph node synthesize[refund-policy] completed in "
+        )
+        for message in stderr
+    )
+    assert any(
+        message.startswith("[knowledge-forge] LangGraph node synthesize completed in ")
+        for message in stderr
+    )
+    assert any(
+        message.startswith("[knowledge-forge] LangGraph node render_and_validate completed in ")
+        for message in stderr
+    )
+    assert any(
+        message.startswith("[knowledge-forge] LangGraph workflow completed in ")
+        for message in stderr
+    )
+    assert stderr[-1] == "[knowledge-forge] Total processing time: 15.000s."
     bundle_text = "\n".join(
         path.read_text(encoding="utf-8") for path in output.rglob("*") if path.is_file()
     )

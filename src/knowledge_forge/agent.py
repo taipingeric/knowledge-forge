@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from time import monotonic
 from typing import Any, TypeVar
@@ -70,6 +71,60 @@ def _recover_invalid_search(exc: Exception, _: ToolCallRequest) -> str | None:
     return None
 
 
+@dataclass(frozen=True)
+class TokenUsage:
+    """Aggregate model-call counts and token usage for one reasoning task or node."""
+
+    calls: int = 0
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    total_tokens: int | None = None
+    input_unknown_calls: int | None = None
+    output_unknown_calls: int | None = None
+    total_unknown_calls: int | None = None
+
+    def __post_init__(self) -> None:
+        """Track calls whose provider token counts were unavailable."""
+
+        for field, value in (
+            ("input_unknown_calls", self.input_unknown_calls),
+            ("output_unknown_calls", self.output_unknown_calls),
+            ("total_unknown_calls", self.total_unknown_calls),
+        ):
+            if value is None:
+                token_field = field.removesuffix("_unknown_calls") + "_tokens"
+                object.__setattr__(
+                    self, field, self.calls if getattr(self, token_field) is None else 0
+                )
+
+    def add(self, other: TokenUsage) -> TokenUsage:
+        """Add usage while preserving unavailable fields to avoid false precision."""
+
+        if self.calls == 0:
+            return other
+        if other.calls == 0:
+            return self
+        return TokenUsage(
+            calls=self.calls + other.calls,
+            input_tokens=_sum_values(self.input_tokens, other.input_tokens),
+            output_tokens=_sum_values(self.output_tokens, other.output_tokens),
+            total_tokens=_sum_values(self.total_tokens, other.total_tokens),
+            input_unknown_calls=self.input_unknown_calls + other.input_unknown_calls,
+            output_unknown_calls=self.output_unknown_calls + other.output_unknown_calls,
+            total_unknown_calls=self.total_unknown_calls + other.total_unknown_calls,
+        )
+
+
+def _sum_values(left: int | None, right: int | None) -> int | None:
+    """Sum known token counts while retaining a partial value when one side is absent."""
+
+    if left is None:
+        return right
+    if right is None:
+        return left
+    return left + right
+
+
 class _ModelCallTracker(BaseCallbackHandler):
     """Count model runs and report their provider usage for one reasoning task."""
 
@@ -79,6 +134,7 @@ class _ModelCallTracker(BaseCallbackHandler):
         self._report = report or (lambda _: None)
         self._started_at: dict[UUID, float] = {}
         self._reported: set[UUID] = set()
+        self.usage = TokenUsage()
 
     @property
     def count(self) -> int:
@@ -117,9 +173,7 @@ class _ModelCallTracker(BaseCallbackHandler):
         self.run_ids.add(run_id)
         self._started_at.setdefault(run_id, monotonic())
 
-    def _finish(
-        self, run_id: UUID, status: str, usage: tuple[int | None, int | None, int | None] | None
-    ) -> None:
+    def _finish(self, run_id: UUID, status: str, usage: TokenUsage | None) -> None:
         """Emit one diagnostic for a model run, even when provider usage is absent."""
 
         if run_id in self._reported:
@@ -127,13 +181,24 @@ class _ModelCallTracker(BaseCallbackHandler):
         self._reported.add(run_id)
         started_at = self._started_at.pop(run_id, None)
         elapsed = monotonic() - started_at if started_at is not None else 0.0
-        input_tokens, output_tokens, total_tokens = usage or (None, None, None)
+        usage = usage or TokenUsage()
+        self.usage = self.usage.add(
+            TokenUsage(
+                calls=1,
+                input_tokens=usage.input_tokens,
+                output_tokens=usage.output_tokens,
+                total_tokens=usage.total_tokens,
+                input_unknown_calls=1 if usage.input_tokens is None else 0,
+                output_unknown_calls=1 if usage.output_tokens is None else 0,
+                total_unknown_calls=1 if usage.total_tokens is None else 0,
+            )
+        )
         prefix = "Model call completed" if status == "completed" else "Model call failed"
         self._report(
             f"{prefix}: model={self._model}; "
-            f"input_tokens={_format_usage(input_tokens)}; "
-            f"output_tokens={_format_usage(output_tokens)}; "
-            f"total_tokens={_format_usage(total_tokens)}; duration={elapsed:.3f}s."
+            f"input_tokens={_format_usage(usage.input_tokens)}; "
+            f"output_tokens={_format_usage(usage.output_tokens)}; "
+            f"total_tokens={_format_usage(usage.total_tokens)}; duration={elapsed:.3f}s."
         )
 
 
@@ -145,7 +210,7 @@ def _format_usage(value: int | None) -> str:
 
 def _extract_token_usage(
     response: LLMResult,
-) -> tuple[int | None, int | None, int | None] | None:
+) -> TokenUsage | None:
     """Extract normalized token counts from common LangChain provider response shapes."""
 
     candidates: list[Mapping[str, Any]] = []
@@ -181,7 +246,11 @@ def _extract_token_usage(
             total_tokens = _first_int(candidate, "total_tokens")
     if input_tokens is None and output_tokens is None and total_tokens is None:
         return None
-    return input_tokens, output_tokens, total_tokens
+    return TokenUsage(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens,
+    )
 
 
 def _first_int(values: Mapping[str, Any], *keys: str) -> int | None:
@@ -233,6 +302,7 @@ class ReasoningAgent:
         self._sources = {source.id: source for source in sources}
         self._max_steps = max_steps
         self._steps = 0
+        self._token_usage = TokenUsage()
         self._model_name = model
         self._progress = progress
         self._model = ChatOpenAI(
@@ -260,6 +330,12 @@ class ReasoningAgent:
         """Return the number of model calls consumed by this agent instance."""
 
         return self._steps
+
+    @property
+    def token_usage(self) -> TokenUsage:
+        """Return aggregate model usage observed by this reasoning agent."""
+
+        return self._token_usage
 
     def _invoke(
         self,
@@ -299,6 +375,7 @@ class ReasoningAgent:
                 self._steps += counter.count or sum(
                     isinstance(message, AIMessage) for message in result.get("messages", [])
                 )
+                self._token_usage = self._token_usage.add(counter.usage)
                 counted = True
                 if self._steps > self._max_steps:
                     raise ValidationFailure(
@@ -314,10 +391,12 @@ class ReasoningAgent:
             except APIError as exc:
                 if not counted:
                     self._steps += counter.count
+                    self._token_usage = self._token_usage.add(counter.usage)
                 raise ValidationFailure(f"Model request failed: {exc}") from exc
             except Exception as exc:
                 if not counted:
                     self._steps += counter.count
+                    self._token_usage = self._token_usage.add(counter.usage)
                 last_error = exc
                 if attempt == 2:
                     break

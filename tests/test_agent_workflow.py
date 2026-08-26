@@ -9,7 +9,7 @@ import pytest
 from langchain.messages import AIMessage
 
 from knowledge_forge import agent as agent_module
-from knowledge_forge.agent import ReasoningAgent
+from knowledge_forge.agent import ReasoningAgent, TokenUsage
 from knowledge_forge.errors import ValidationFailure
 from knowledge_forge.models import (
     ConceptDraft,
@@ -655,6 +655,7 @@ def test_agent_reports_model_usage_for_each_model_request(
         and message.endswith("s.")
         for message in progress
     )
+    assert agent.token_usage == TokenUsage(calls=2, input_tokens=2, output_tokens=2, total_tokens=4)
 
 
 def test_agent_reports_unavailable_model_usage_without_failing(
@@ -726,6 +727,7 @@ def test_agent_reports_unavailable_model_usage_without_failing(
         and message.endswith("s.")
         for message in progress
     )
+    assert agent.token_usage == TokenUsage(calls=2)
 
 
 def test_agent_recovers_from_invalid_search_query_with_langchain_middleware(
@@ -873,6 +875,7 @@ def test_agent_does_not_retry_provider_api_errors(
         "output_tokens=unavailable; total_tokens=unavailable; duration="
     )
     assert progress[0].endswith("s.")
+    assert agent.token_usage == TokenUsage(calls=1)
 
 
 class FakeReasoningAgent:
@@ -994,6 +997,10 @@ def test_workflow_bounds_concurrent_synthesis_and_preserves_plan_order() -> None
             return tick
 
     class ConcurrentSessionAgent(IsolatedSessionAgent):
+        @property
+        def token_usage(self) -> TokenUsage:
+            return TokenUsage(calls=1, input_tokens=1, output_tokens=2, total_tokens=3)
+
         def synthesize(self, concept: PlannedConcept, language: str) -> ConceptDraft:
             nonlocal active, maximum_active
             with state_lock:
@@ -1044,6 +1051,22 @@ def test_workflow_bounds_concurrent_synthesis_and_preserves_plan_order() -> None
             message.startswith(f"Concept synthesis {current}/3 ({slug}) completed in ")
             for message in progress
         )
+    for slug in ("alpha", "beta", "gamma"):
+        assert any(
+            message.startswith(f"LangGraph node synthesize[{slug}] completed in ")
+            and "model_calls=1; input_tokens=1; output_tokens=2; total_tokens=3." in message
+            for message in progress
+        )
+    assert any(
+        message.startswith("LangGraph node synthesize completed in ")
+        and "model_calls=3; input_tokens=3; output_tokens=6; total_tokens=9." in message
+        for message in progress
+    )
+    assert any(
+        message.startswith("LangGraph workflow completed in ")
+        and "model_calls=4; input_tokens=4; output_tokens=8; total_tokens=12." in message
+        for message in progress
+    )
 
 
 def test_concurrent_synthesis_drains_started_work_without_starting_more_after_failure() -> None:
@@ -1107,12 +1130,18 @@ def test_workflow_identifies_the_concept_whose_reasoning_budget_failed() -> None
 
 
 def test_workflow_identifies_a_planning_reasoning_budget_failure() -> None:
+    progress: list[str] = []
+
     class FailingPlanningAgent:
         def plan(self, language: str, existing_ids: list[str]) -> ConceptPlan:
             raise ValidationFailure("Agent step budget exceeded (2 model calls)")
 
     graph = build_workflow(
-        FailingPlanningAgent, [pdf()], "knowledge-forge/fake", concept_concurrency=1
+        FailingPlanningAgent,
+        [pdf()],
+        "knowledge-forge/fake",
+        concept_concurrency=1,
+        progress=progress.append,
     )
 
     with pytest.raises(
@@ -1120,6 +1149,8 @@ def test_workflow_identifies_a_planning_reasoning_budget_failure() -> None:
         match=r"Concept planning failed: Agent step budget exceeded",
     ):
         graph.invoke({"language": "auto", "existing_ids": []})
+    assert any(message.startswith("LangGraph node plan failed in ") for message in progress)
+    assert any(message.startswith("LangGraph workflow failed in ") for message in progress)
 
 
 def test_langgraph_workflow_returns_valid_concepts() -> None:
@@ -1134,10 +1165,134 @@ def test_langgraph_workflow_returns_valid_concepts() -> None:
     result = graph.invoke({"language": "auto", "existing_ids": []})
     assert result["language"] == "English"
     assert "concepts/refund-policy" in result["concepts"]
-    assert progress == [
+    assert progress[:2] == [
         "Planning concepts with the reasoning agent...",
         "Planned 1 concepts in English.",
-        "Synthesizing concept 1/1: refund-policy",
-        "Rendering and validating 1 concepts...",
-        "Agent-generated concepts passed validation.",
     ]
+    assert any(message.startswith("LangGraph node plan completed in ") for message in progress)
+    assert "Synthesizing concept 1/1: refund-policy" in progress
+    assert any(
+        message.startswith("LangGraph node synthesize[refund-policy] completed in ")
+        for message in progress
+    )
+    assert any(
+        message.startswith("LangGraph node synthesize completed in ") for message in progress
+    )
+    assert "Rendering and validating 1 concepts..." in progress
+    assert "Agent-generated concepts passed validation." in progress
+    assert any(
+        message.startswith("LangGraph node render_and_validate completed in ")
+        for message in progress
+    )
+    assert any(message.startswith("LangGraph workflow completed in ") for message in progress)
+
+
+def test_workflow_reports_node_and_total_token_usage() -> None:
+    progress: list[str] = []
+
+    class UsageAgent(FakeReasoningAgent):
+        @property
+        def token_usage(self) -> TokenUsage:
+            return TokenUsage(calls=1, input_tokens=4, output_tokens=2, total_tokens=6)
+
+    graph = build_workflow(
+        UsageAgent,
+        [pdf()],
+        "knowledge-forge/fake",
+        concept_concurrency=1,
+        progress=progress.append,
+    )
+
+    graph.invoke({"language": "auto", "existing_ids": []})
+
+    assert any(
+        message.startswith("LangGraph node plan completed in ")
+        and "model_calls=1; input_tokens=4; output_tokens=2; total_tokens=6." in message
+        for message in progress
+    )
+    assert any(
+        message.startswith("LangGraph node synthesize[refund-policy] completed in ")
+        and "model_calls=1; input_tokens=4; output_tokens=2; total_tokens=6." in message
+        for message in progress
+    )
+    assert any(
+        message.startswith("LangGraph node synthesize completed in ")
+        and "model_calls=1; input_tokens=4; output_tokens=2; total_tokens=6." in message
+        for message in progress
+    )
+    assert any(
+        message.startswith("LangGraph node render_and_validate completed in ")
+        and "model_calls=0; input_tokens=0; output_tokens=0; total_tokens=0." in message
+        for message in progress
+    )
+    assert any(
+        message.startswith("LangGraph workflow completed in ")
+        and "model_calls=2; input_tokens=8; output_tokens=4; total_tokens=12." in message
+        for message in progress
+    )
+
+
+def test_workflow_reports_aggregate_usage_after_synthesis_failure() -> None:
+    progress: list[str] = []
+
+    class FailingUsageAgent(FakeReasoningAgent):
+        @property
+        def token_usage(self) -> TokenUsage:
+            return TokenUsage(calls=1, input_tokens=4, output_tokens=2, total_tokens=6)
+
+        def synthesize(self, concept: PlannedConcept, language: str) -> ConceptDraft:
+            raise ValidationFailure("provider rejected the Concept")
+
+    graph = build_workflow(
+        FailingUsageAgent,
+        [pdf()],
+        "knowledge-forge/fake",
+        concept_concurrency=1,
+        progress=progress.append,
+    )
+
+    with pytest.raises(ValidationFailure, match="provider rejected the Concept"):
+        graph.invoke({"language": "auto", "existing_ids": []})
+
+    assert any(
+        message.startswith("LangGraph workflow failed in ")
+        and "model_calls=2; input_tokens=8; output_tokens=4; total_tokens=12." in message
+        for message in progress
+    )
+
+
+def test_workflow_marks_mixed_known_and_unknown_usage_as_partial() -> None:
+    progress: list[str] = []
+
+    class MixedUsageAgent(FakeReasoningAgent):
+        created = 0
+
+        def __init__(self) -> None:
+            type(self).created += 1
+            self._usage = (
+                TokenUsage(calls=1, input_tokens=4, output_tokens=2, total_tokens=6)
+                if self.created == 1
+                else TokenUsage(calls=1)
+            )
+
+        @property
+        def token_usage(self) -> TokenUsage:
+            return self._usage
+
+    graph = build_workflow(
+        MixedUsageAgent,
+        [pdf()],
+        "knowledge-forge/fake",
+        concept_concurrency=1,
+        progress=progress.append,
+    )
+
+    graph.invoke({"language": "auto", "existing_ids": []})
+
+    assert any(
+        message.startswith("LangGraph workflow completed in ")
+        and "model_calls=2; input_tokens=4 (partial); output_tokens=2 (partial); "
+        "total_tokens=6 (partial)."
+        in message
+        for message in progress
+    )
