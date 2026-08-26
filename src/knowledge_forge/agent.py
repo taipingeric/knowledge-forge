@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
+from time import monotonic
 from typing import Any, TypeVar
 from uuid import UUID
 
@@ -12,6 +13,7 @@ from langchain.agents.middleware.types import ToolCallRequest
 from langchain.agents.structured_output import ToolStrategy
 from langchain.messages import AIMessage
 from langchain_core.callbacks import BaseCallbackHandler
+from langchain_core.outputs import LLMResult
 from langchain_openai import ChatOpenAI
 from openai import APIError
 from pydantic import BaseModel
@@ -68,11 +70,15 @@ def _recover_invalid_search(exc: Exception, _: ToolCallRequest) -> str | None:
     return None
 
 
-class _StepCounter(BaseCallbackHandler):
-    """Count distinct model runs used by one reasoning task."""
+class _ModelCallTracker(BaseCallbackHandler):
+    """Count model runs and report their provider usage for one reasoning task."""
 
-    def __init__(self) -> None:
+    def __init__(self, model: str, report: Callable[[str], None] | None = None) -> None:
         self.run_ids: set[UUID] = set()
+        self._model = model
+        self._report = report or (lambda _: None)
+        self._started_at: dict[UUID, float] = {}
+        self._reported: set[UUID] = set()
 
     @property
     def count(self) -> int:
@@ -85,14 +91,107 @@ class _StepCounter(BaseCallbackHandler):
     ) -> None:
         """Record a chat-model run so the agent's step budget counts it once."""
 
-        self.run_ids.add(run_id)
+        self._start(run_id)
 
     def on_llm_start(
         self, serialized: dict[str, Any], prompts: list[str], *, run_id: UUID, **_: Any
     ) -> None:
         """Record a legacy LLM run so callbacks cannot undercount model steps."""
 
+        self._start(run_id)
+
+    def on_llm_end(self, response: LLMResult, *, run_id: UUID, **_: Any) -> None:
+        """Report successful model usage and elapsed time."""
+
+        usage = _extract_token_usage(response)
+        self._finish(run_id, "completed", usage)
+
+    def on_llm_error(self, error: BaseException, *, run_id: UUID, **_: Any) -> None:
+        """Report failed model requests without exposing request content."""
+
+        self._finish(run_id, "failed", None)
+
+    def _start(self, run_id: UUID) -> None:
+        """Record a model run and its monotonic start time once."""
+
         self.run_ids.add(run_id)
+        self._started_at.setdefault(run_id, monotonic())
+
+    def _finish(
+        self, run_id: UUID, status: str, usage: tuple[int | None, int | None, int | None] | None
+    ) -> None:
+        """Emit one diagnostic for a model run, even when provider usage is absent."""
+
+        if run_id in self._reported:
+            return
+        self._reported.add(run_id)
+        started_at = self._started_at.pop(run_id, None)
+        elapsed = monotonic() - started_at if started_at is not None else 0.0
+        input_tokens, output_tokens, total_tokens = usage or (None, None, None)
+        prefix = "Model call completed" if status == "completed" else "Model call failed"
+        self._report(
+            f"{prefix}: model={self._model}; "
+            f"input_tokens={_format_usage(input_tokens)}; "
+            f"output_tokens={_format_usage(output_tokens)}; "
+            f"total_tokens={_format_usage(total_tokens)}; duration={elapsed:.3f}s."
+        )
+
+
+def _format_usage(value: int | None) -> str:
+    """Format an optional token count without inventing provider usage."""
+
+    return str(value) if value is not None else "unavailable"
+
+
+def _extract_token_usage(
+    response: LLMResult,
+) -> tuple[int | None, int | None, int | None] | None:
+    """Extract normalized token counts from common LangChain provider response shapes."""
+
+    candidates: list[Mapping[str, Any]] = []
+    for generation_group in response.generations:
+        for generation in generation_group:
+            message = getattr(generation, "message", None)
+            usage_metadata = getattr(message, "usage_metadata", None)
+            if isinstance(usage_metadata, Mapping):
+                candidates.append(usage_metadata)
+            response_metadata = getattr(message, "response_metadata", None)
+            if isinstance(response_metadata, Mapping):
+                candidates.append(response_metadata)
+                for key in ("token_usage", "usage"):
+                    nested = response_metadata.get(key)
+                    if isinstance(nested, Mapping):
+                        candidates.append(nested)
+    if isinstance(response.llm_output, Mapping):
+        candidates.append(response.llm_output)
+        for key in ("token_usage", "usage"):
+            nested = response.llm_output.get(key)
+            if isinstance(nested, Mapping):
+                candidates.append(nested)
+
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    total_tokens: int | None = None
+    for candidate in candidates:
+        if input_tokens is None:
+            input_tokens = _first_int(candidate, "input_tokens", "prompt_tokens")
+        if output_tokens is None:
+            output_tokens = _first_int(candidate, "output_tokens", "completion_tokens")
+        if total_tokens is None:
+            total_tokens = _first_int(candidate, "total_tokens")
+    if input_tokens is None and output_tokens is None and total_tokens is None:
+        return None
+    return input_tokens, output_tokens, total_tokens
+
+
+def _first_int(values: Mapping[str, Any], *keys: str) -> int | None:
+    """Return the first integer-valued token count under the supplied aliases."""
+
+    for key in keys:
+        value = values.get(key)
+        if isinstance(value, int):
+            return value
+    return None
 
 
 SYSTEM_PROMPT = """You are the reasoning agent inside Knowledge Forge.
@@ -128,11 +227,14 @@ class ReasoningAgent:
         max_steps: int,
         parallel_tool_calls: bool = True,
         bundle: Path | None = None,
+        progress: Callable[[str], None] | None = None,
     ) -> None:
         self._index = index
         self._sources = {source.id: source for source in sources}
         self._max_steps = max_steps
         self._steps = 0
+        self._model_name = model
+        self._progress = progress
         self._model = ChatOpenAI(
             model=model,
             api_key=api_key,
@@ -187,7 +289,7 @@ class ReasoningAgent:
                 response_format=ToolStrategy(schema, handle_errors=False),
             )
             repair = "" if not last_error else f"\nRepair the previous invalid result: {last_error}"
-            counter = _StepCounter()
+            counter = _ModelCallTracker(self._model_name, self._progress)
             counted = False
             try:
                 result = agent.invoke(

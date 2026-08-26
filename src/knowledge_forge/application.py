@@ -57,7 +57,7 @@ from .state import (
     write_baseline,
     write_state,
 )
-from .timing import ProcessingTimer, processing_phase
+from .timing import ProcessingTimer, ProgressReporter, processing_phase
 from .validation import validate_bundle, validate_portable_bundle
 from .workflow import build_workflow
 
@@ -341,6 +341,7 @@ def _run_agent(
         raise ValidationFailure("OPENAI_API_KEY must not be empty")
     temporary = Path(tempfile.mkdtemp(prefix="knowledge-forge-fts-"))
     report = progress or (lambda _: None)
+    agent_reporter = timing.reporter if timing is not None else ProgressReporter(report)
     try:
         page_count = sum(len(source.evidence) for source in sources)
         report(f"Indexing {page_count} evidence units from {len(sources)} Knowledge Sources...")
@@ -364,6 +365,7 @@ def _run_agent(
                 max_steps=generation.max_agent_steps,
                 parallel_tool_calls=generation.parallel_tool_calls,
                 bundle=output,
+                progress=agent_reporter.report,
             )
 
         with index:
@@ -372,7 +374,7 @@ def _run_agent(
                 sources,
                 _actor(generation.model),
                 concept_concurrency=generation.concept_concurrency,
-                progress=progress,
+                progress=agent_reporter.report,
                 timing=timing,
             )
             result = graph.invoke(

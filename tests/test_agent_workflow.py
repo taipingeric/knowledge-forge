@@ -582,10 +582,157 @@ def test_agent_replays_every_parallel_tool_call_and_matching_output(
     ]
 
 
+def test_agent_reports_model_usage_for_each_model_request(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    requests: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        requests.append(payload)
+        function_calls = [item for item in payload["input"] if item.get("type") == "function_call"]
+        if not function_calls:
+            return httpx.Response(
+                200,
+                json=_responses_payload(
+                    [_function_call("search_pages", "call_search", {"query": "refunds"})],
+                    "resp_usage_search",
+                ),
+            )
+        return httpx.Response(
+            200,
+            json=_responses_payload(
+                [
+                    _function_call(
+                        "ConceptPlan",
+                        "call_plan",
+                        {
+                            "language": "English",
+                            "concepts": [
+                                {
+                                    "slug": "refund-policy",
+                                    "title": "Refund policy",
+                                    "type": "Policy",
+                                    "description": "Rules.",
+                                    "search_queries": ["refund"],
+                                }
+                            ],
+                        },
+                    )
+                ],
+                "resp_usage_plan",
+            ),
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    real_model = agent_module.ChatOpenAI
+    progress: list[str] = []
+
+    def fake_model(**kwargs: object) -> object:
+        return real_model(**kwargs, http_client=client)
+
+    monkeypatch.setattr(agent_module, "ChatOpenAI", fake_model)
+    with PageIndex(tmp_path / "pages.sqlite") as index:
+        index.add([pdf()])
+        agent = ReasoningAgent(
+            index=index,
+            sources=[pdf()],
+            model="fake",
+            api_key="secret",
+            base_url="https://models.example/v1",
+            max_steps=10,
+            progress=progress.append,
+        )
+        plan = agent.plan("auto", [])
+
+    assert plan.concepts[0].slug == "refund-policy"
+    assert len(requests) == len(progress) == 2
+    assert all(
+        message.startswith(
+            "Model call completed: model=fake; input_tokens=1; output_tokens=1; "
+            "total_tokens=2; duration="
+        )
+        and message.endswith("s.")
+        for message in progress
+    )
+
+
+def test_agent_reports_unavailable_model_usage_without_failing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def response(output: list[dict[str, object]], response_id: str) -> httpx.Response:
+        payload = _responses_payload(output, response_id)
+        del payload["usage"]
+        return httpx.Response(200, json=payload)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        function_calls = [item for item in payload["input"] if item.get("type") == "function_call"]
+        if not function_calls:
+            return response(
+                [_function_call("search_pages", "call_search", {"query": "refunds"})],
+                "resp_no_usage_search",
+            )
+        return response(
+            [
+                _function_call(
+                    "ConceptPlan",
+                    "call_plan",
+                    {
+                        "language": "English",
+                        "concepts": [
+                            {
+                                "slug": "refund-policy",
+                                "title": "Refund policy",
+                                "type": "Policy",
+                                "description": "Rules.",
+                                "search_queries": ["refund"],
+                            }
+                        ],
+                    },
+                )
+            ],
+            "resp_no_usage_plan",
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    real_model = agent_module.ChatOpenAI
+    progress: list[str] = []
+
+    def fake_model(**kwargs: object) -> object:
+        return real_model(**kwargs, http_client=client)
+
+    monkeypatch.setattr(agent_module, "ChatOpenAI", fake_model)
+    with PageIndex(tmp_path / "pages.sqlite") as index:
+        index.add([pdf()])
+        agent = ReasoningAgent(
+            index=index,
+            sources=[pdf()],
+            model="fake",
+            api_key="secret",
+            base_url="https://models.example/v1",
+            max_steps=10,
+            progress=progress.append,
+        )
+        plan = agent.plan("auto", [])
+
+    assert plan.concepts[0].slug == "refund-policy"
+    assert len(progress) == 2
+    assert all(
+        message.startswith(
+            "Model call completed: model=fake; input_tokens=unavailable; "
+            "output_tokens=unavailable; total_tokens=unavailable; duration="
+        )
+        and message.endswith("s.")
+        for message in progress
+    )
+
+
 def test_agent_recovers_from_invalid_search_query_with_langchain_middleware(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     requests: list[dict[str, object]] = []
+    progress: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content)
@@ -662,17 +809,28 @@ def test_agent_recovers_from_invalid_search_query_with_langchain_middleware(
             api_key="secret",
             base_url="https://models.example/v1",
             max_steps=10,
+            progress=progress.append,
         )
         plan = agent.plan("auto", [])
 
     assert plan.concepts[0].slug == "storage-engine-api"
     assert len(requests) == 3
+    assert len(progress) == 3
+    assert all(
+        message.startswith(
+            "Model call completed: model=fake; input_tokens=1; output_tokens=1; "
+            "total_tokens=2; duration="
+        )
+        and message.endswith("s.")
+        for message in progress
+    )
 
 
 def test_agent_does_not_retry_provider_api_errors(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     request_count = 0
+    progress: list[str] = []
 
     def handler(_: httpx.Request) -> httpx.Response:
         nonlocal request_count
@@ -703,11 +861,18 @@ def test_agent_does_not_retry_provider_api_errors(
             api_key="secret",
             base_url="https://models.example/v1",
             max_steps=10,
+            progress=progress.append,
         )
         with pytest.raises(ValidationFailure, match="Model request failed"):
             agent.plan("auto", [])
 
     assert request_count == 1
+    assert len(progress) == 1
+    assert progress[0].startswith(
+        "Model call failed: model=fake; input_tokens=unavailable; "
+        "output_tokens=unavailable; total_tokens=unavailable; duration="
+    )
+    assert progress[0].endswith("s.")
 
 
 class FakeReasoningAgent:
