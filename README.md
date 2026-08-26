@@ -2,27 +2,27 @@
 
 English | [繁體中文](README-zh.md)
 
-Knowledge Forge turns team-approved PDF documents into a wiki that conforms to Google Open Knowledge Format 0.2. LangGraph orchestrates a fixed workflow with one LangChain reasoning-agent role for cross-document concept planning and synthesis. Each planning or Concept synthesis task runs in an isolated reasoning session.
+Knowledge Forge turns team-approved source material into a wiki that conforms to Google Open Knowledge Format 0.2. LangGraph orchestrates a fixed workflow with one LangChain reasoning-agent role for cross-document concept planning and synthesis. Each planning or Concept synthesis task runs in an isolated reasoning session.
 
 Agents and people jointly maintain the resulting Bundle. A later update never silently overwrites human edits. A deterministic three-way merge combines non-overlapping changes. A conflict in the same structural block leaves the live Bundle unchanged and creates an auditable reconciliation workspace.
 
 ## Knowledge Sources
 
-The Input Corpus can contain PDFs and ordinary, non-empty UTF-8 Markdown documents. Ordinary Markdown is opaque untrusted evidence: frontmatter, HTML, comments, and body text are indexed without executing includes, fetching URLs, following links, or reading linked images. Markdown evidence uses a durable heading path, same-level occurrence, and content hash; displayed line ranges are diagnostic only. A directory marked as an OKF import root is rejected as not yet supported rather than silently treated as ordinary evidence.
+The Input Corpus can contain PDFs, ordinary non-empty UTF-8 Markdown documents, and recognized OKF 0.2 import Bundles. Ordinary Markdown is opaque untrusted evidence: frontmatter, HTML, comments, and body text are indexed without executing includes, fetching URLs, following links, or reading linked images. Markdown evidence uses a durable heading path, same-level occurrence, and content hash; displayed line ranges are diagnostic only. A directory whose root `index.md` declares only `okf_version: "0.2"` is treated as an import boundary, not as ordinary evidence. Recognized Bundles are validated before import, and nested recognized Bundles are imported from their innermost boundary.
 
 A recognized OKF 0.2 Bundle is imported without model configuration or reasoning. Its Concept Documents retain their exact UTF-8 Markdown bytes, identities, languages, types, extensions, provenance, citations, links, and image syntax; Knowledge Forge never translates or mutates imported content.
 
 ## MVP scope
 
-- Input: recursively discovered PDFs with complete text layers under a specified directory.
+- Input: recursively discovered PDFs with complete text layers and ordinary Markdown sources under a specified directory; recognized OKF 0.2 Bundles are imported at their declared boundaries.
 - Output: an OKF 0.2 Markdown Bundle. The MVP does not include a Web UI, chat, RAG API, or source PDFs.
-- Model: an OpenAI-compatible endpoint that supports tool calling through the Responses API. Chat Completions is not used.
-- Retrieval: a temporary SQLite FTS5 page index created for each run and deleted afterward.
-- Concept types: `Concept`, `Definition`, `Policy`, `Procedure`, and `FAQ`.
+- Model: for agent-backed operations, an OpenAI-compatible endpoint that supports tool calling through the Responses API. Chat Completions is not used.
+- Retrieval: a temporary SQLite FTS5 evidence index created for each run and deleted afterward.
+- Agent-generated Concept types: `Concept`, `Definition`, `Policy`, `Procedure`, and `FAQ`; imported Concepts retain their source-declared types.
 
-Image-only scanned PDFs, encrypted PDFs, damaged files, documents with no extractable text, symlinks, and normalized path collisions cause the complete operation to fail atomically. A PDF with extractable text can contain intentionally blank pages.
+Image-only scanned PDFs, encrypted PDFs, damaged files, empty or non-UTF-8 Markdown, documents with no extractable text, symlinks, malformed imported Bundles, and normalized path or imported Concept ID collisions cause the complete operation to fail atomically. A PDF with extractable text can contain intentionally blank pages.
 
-PDF content is untrusted data. The agent has no shell, network, or arbitrary file-writing tools. Extracted PDF text is sent to the configured model endpoint. Knowledge Forge does not write PDFs, extracted full text, or API keys into the Bundle. Model requests always use the Responses API with `store: false`. Knowledge Forge refuses to run when LangSmith or LangChain tracing is enabled, which prevents additional transmission of source content.
+Source content is untrusted data. The agent has no shell, network, or arbitrary file-writing tools. Extracted source evidence is sent to the configured model endpoint when reasoning is required. Import-only operations do not call a model. Knowledge Forge does not write source files, extracted full text, or API keys into the Bundle. Model requests always use the Responses API with `store: false`. Knowledge Forge refuses to run when LangSmith or LangChain tracing is enabled, which prevents additional transmission of source content.
 
 ## Source and output isolation
 
@@ -46,7 +46,7 @@ Python 3.12 and [uv](https://docs.astral.sh/uv/) are required:
 uv sync
 ```
 
-The model name must be explicit. API keys are not written into the Bundle or state:
+The model name must be explicit for operations that require reasoning. API keys are not written into the Bundle or state:
 
 ```bash
 cp .env.example .env
@@ -75,7 +75,7 @@ export OPENAI_MODEL=...
 
 ## CLI
 
-The model and endpoint for `generate` and `update` can also be specified on the command line:
+The model and endpoint for agent-backed `generate` and `update` can also be specified on the command line. A source tree containing only recognized OKF import Bundles is imported without model configuration or reasoning:
 
 ```bash
 uv run knowledge-forge generate \
@@ -128,9 +128,9 @@ Compatibility mode sends `parallel_tool_calls: false`. If the model or gateway i
 
 ```text
 [knowledge-forge] Tool-call mode: parallel.
-[knowledge-forge] Reading PDF sources...
-[knowledge-forge] Loaded 3 PDFs with 84 pages.
-[knowledge-forge] Indexing 84 pages from 3 PDFs...
+[knowledge-forge] Reading Knowledge Sources...
+[knowledge-forge] Loaded 3 Knowledge Sources with 84 evidence units.
+[knowledge-forge] Indexing 84 evidence units from 3 Knowledge Sources...
 [knowledge-forge] Planning concepts with the reasoning agent...
 [knowledge-forge] Planned 6 concepts in Traditional Chinese.
 [knowledge-forge] Synthesizing concept 1/6: refund-policy
@@ -139,8 +139,8 @@ Compatibility mode sends `parallel_tool_calls: false`. If the model or gateway i
 Each completed phase includes its duration, and the command ends with a total-duration summary:
 
 ```text
-[knowledge-forge] PDF Source reading completed in 0.214s.
-[knowledge-forge] PDF indexing completed in 0.038s.
+[knowledge-forge] Knowledge Source reading completed in 0.214s.
+[knowledge-forge] Knowledge Source indexing completed in 0.038s.
 [knowledge-forge] Concept planning completed in 12.481s.
 [knowledge-forge] Concept synthesis 1/6 (refund-policy) completed in 8.327s.
 [knowledge-forge] Concept rendering and validation completed in 0.006s.
@@ -149,9 +149,9 @@ Each completed phase includes its duration, and the command ends with a total-du
 [knowledge-forge] Total processing time: 61.842s.
 ```
 
-On failure, completed phases and total elapsed time are still reported while the existing error and exit code are preserved. These messages do not contain full PDF text, model responses, or API keys. Timing and progress are operational stderr output only; they do not enter the OKF Bundle, Agent Baseline, Generation Identity, reconciliation artifacts, or private state. The final command result remains on stdout for use in shell pipelines.
+On failure, completed phases and total elapsed time are still reported while the existing error and exit code are preserved. These messages do not contain full source text, model responses, or API keys. Timing and progress are operational stderr output only; they do not enter the OKF Bundle, Agent Baseline, Generation Identity, reconciliation artifacts, or private state. The final command result remains on stdout for use in shell pipelines.
 
-Update from the complete authoritative PDF set. `--source` is not the set of files changed in this run. It is the complete set of PDFs that the Team Knowledge Wiki must currently use:
+Update from the complete authoritative Knowledge Source set. `--source` is not the set of files changed in this run. It is the complete set of supported sources that the Team Knowledge Wiki must currently use:
 
 ```bash
 uv run knowledge-forge update \
@@ -159,11 +159,30 @@ uv run knowledge-forge update \
   --out ../knowledge-base
 ```
 
-When the PDF Sources, Bundle, state, and Generation Identity are all unchanged, `update` does not call the model or write files. Tool-call mode is part of Generation Identity, so changing it regenerates the agent candidate instead of returning `No changes`. People can edit Concept body text and the `type`, `title`, `description`, `tags`, and `status` fields. Do not directly edit `generated`, `sources`, hashes, page mappings, `verified`, `index.md`, `log.md`, or `.knowledge-forge/`.
+When the Knowledge Sources, Bundle, state, and Generation Identity are all unchanged, `update` does not call the model or write files. Tool-call mode is part of Generation Identity, so changing it requires explicit regeneration instead of returning `No changes`. People can edit Concept body text and the `type`, `title`, `description`, `tags`, and `status` fields. Do not directly edit `generated`, `sources`, hashes, locators, `verified`, `index.md`, `log.md`, or `.knowledge-forge/`.
 
-`update` reports durations only for phases that actually run. A deterministic `No changes` result reports current Bundle validation, PDF reading, no-change evaluation, and total time without model phases. An unchanged source set with human edits reports Agent Baseline reuse and merge phases without planning or synthesis. Regeneration reports temporary indexing, planning, and every Concept synthesis separately. Agent candidate merge and Reconciliation Conflict detection are measured as one combined phase because the structural three-way merge detects conflicts as it runs. Candidate validation, reconciliation artifact writing when required, and atomic publication when it occurs are also timed. Reconciliation keeps exit code 3, other operational failures keep exit code 2, and both still report completed phases and total elapsed time.
+`update` reports durations only for phases that actually run. A deterministic `No changes` result reports current Bundle validation, Knowledge Source reading, no-change evaluation, and total time without model phases. An unchanged source set with human edits reports Agent Baseline reuse and merge phases without planning or synthesis. Regeneration reports temporary indexing, planning, and every Concept synthesis separately. Agent candidate merge and Reconciliation Conflict detection are measured as one combined phase because the structural three-way merge detects conflicts as it runs. Candidate validation, reconciliation artifact writing when required, and atomic publication when it occurs are also timed. Reconciliation keeps exit code 3, staleness keeps exit code 4, other operational failures keep exit code 2, and all still report completed phases and total elapsed time.
 
 A valid document that a person adds under `concepts/` is registered as a permanent Human-owned Concept during the next mutation. A normal `update` does not rewrite, delete, or adopt it. The MVP does not yet provide an ownership adoption command.
+
+When referenced evidence, planning coverage, or the Generation Identity becomes stale, `update` leaves the live Bundle and managed state unchanged, writes a Regeneration Impact Report, and exits with code 4:
+
+```text
+knowledge.staleness.md
+knowledge.staleness/
+  manifest.json
+```
+
+The report distinguishes Concepts with changed or missing referenced evidence, stale planning coverage, and Agent-owned Concepts affected by a Generation Identity change. Imported and Human-owned Concepts are not marked stale merely because the generation policy changed. Review the report, then authorize full replanning and synthesis with the matching source set and generation options:
+
+```bash
+uv run knowledge-forge update \
+  --source ./sources \
+  --out ./knowledge \
+  --regenerate-all
+```
+
+The authorization is bound to the live Bundle, source set, and requested Generation Identity. After successful publication, the pending workspace is removed and the Markdown report is retained as a resolved audit record. Incremental regeneration of only affected Concepts is not currently supported.
 
 Run deterministic validation without calling a model or changing files:
 
@@ -179,7 +198,7 @@ Portable validation ignores private Knowledge Forge state. If `.knowledge-forge/
 uv run knowledge-forge validate --managed --out ./knowledge
 ```
 
-To also verify the complete authoritative PDF set, provide `--source`. Managed validation remains read-only and prints `PASS (managed Knowledge Forge Bundle)` on success.
+To also verify the complete authoritative Knowledge Source set, provide `--source`. Managed validation remains read-only and prints `PASS (managed Knowledge Forge Bundle)` on success.
 
 Add human verification to the current Concept version:
 
@@ -221,13 +240,14 @@ uv run knowledge-forge reconcile \
   --resolution ./knowledge.reconciliation/resolution.yaml
 ```
 
-Knowledge Forge rejects a stale resolution if the live Bundle, PDF Source set, pending candidate, or Generation Identity has changed. After success, the pending workspace is deleted and the resolved Markdown report remains for audit.
+Knowledge Forge rejects a stale resolution if the live Bundle, Knowledge Source set, pending candidate, or Generation Identity has changed. Imported Concept withdrawal or an ownership collision can also require reconciliation. After success, the pending workspace is deleted and the resolved Markdown report remains for audit.
 
 ## Exit codes
 
 - `0`: success, including deterministic `No changes` from `update`.
-- `2`: PDF Source, Bundle, state, model output, or operation-argument validation failed.
+- `2`: Knowledge Source, Bundle, state, model output, or operation-argument validation failed.
 - `3`: `update` requires human reconciliation; the live Bundle remains unchanged.
+- `4`: `update` detected stale evidence, planning coverage, or Agent-owned Concepts; the live Bundle remains unchanged until `--regenerate-all` is supplied.
 
 ## Bundle and provenance
 
@@ -235,7 +255,7 @@ Knowledge Forge rejects a stale resolution if the live Bundle, PDF Source set, p
 knowledge/
   index.md
   log.md
-  concepts/<stable-kebab-case-slug>.md
+  concepts/<bundle-relative-concept-id>.md
   .knowledge-forge/
     state.json
     baseline/<concept-id>.json
@@ -246,7 +266,7 @@ knowledge/
 The current schema is v2. A checksum-verified v1 PDF state is loaded only through an explicit compatibility migration; unsupported or unknown schema versions fail with a clear error rather than being reinterpreted. Compatibility loading is read-only; a mutation that publishes managed state writes the current schema atomically. State serialization and its checksum are deterministic. `baseline/` wraps complete agent-authored Markdown in JSON so OKF consumers do not treat it as a public Concept Document. Both locations are tool-managed state and must not be edited manually.
 
 Each Concept-local Source Reference uses a durable logical URN and records separate document and
-typed-locator hashes. Its `id` is deterministically derived from the Source Identity and page address:
+typed-locator hashes. For PDF evidence, its `id` is deterministically derived from the Source Identity and page address:
 
 ```yaml
 sources:
@@ -260,6 +280,8 @@ sources:
 Material, disputed, numeric, policy, or version-sensitive statements use a footnote whose label exactly
 matches its Source Reference ID, such as `[^policies/refunds.pdf#pdf_page:3]`, with a matching
 footnote definition in the body.
+
+Markdown evidence uses a structural locator rather than a page number. It records the full heading path, same-level occurrence, and the hash of the raw block; displayed line ranges are only navigation hints. Imported Concept references retain the upstream source references as a provenance chain and are not rewritten during import.
 
 ## Keyword search over Concepts
 
@@ -285,7 +307,7 @@ The tool takes a plain `keywords: list[str]` (no free-text query) and returns ma
 ## TODO
 
 - [x] Make parallel tool calls configurable for `generate` and `update`. The default preserves and replays all parallel calls; `--no-parallel-tool-calls` selects deterministic single-call compatibility for affected gateways. Provider failures never trigger an automatic fallback.
-- [x] Add processing-time statistics for `generate`. PDF reading, indexing, concept planning, each Concept synthesis, render and validation, candidate writing and validation, publication, and total duration are reported without changing deterministic artifacts.
+- [x] Add processing-time statistics for `generate`. Knowledge Source reading, indexing, concept planning, each Concept synthesis, render and validation, candidate writing and validation, publication, and total duration are reported without changing deterministic artifacts.
 - [x] Extend processing-time statistics across `update` no-change, baseline-reuse, regeneration, reconciliation, and publication paths while reporting only phases that ran.
 
 ## Documentation maintenance
