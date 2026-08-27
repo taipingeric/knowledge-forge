@@ -469,6 +469,59 @@ def test_synthesis_repairs_numbered_citations_using_declared_evidence_order(
     assert "[^2]" not in draft.body
 
 
+def test_synthesis_repairs_numbered_page_citations_outside_evidence_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = PDFSource(
+        id="load-balancing.pdf",
+        resource=logical_resource("load-balancing.pdf"),
+        content_sha256=sha256_text("load balancing"),
+        pages=[
+            SourcePage(number=index, text=f"Load balancing page {index}.") for index in range(1, 16)
+        ],
+    )
+    invalid = {
+        "slug": "load-balancing",
+        "title": "Load Balancing",
+        "type": "Concept",
+        "description": "Load balancing behavior.",
+        "body": "# Load Balancing\n\nRequests are distributed.[^14] Failover is supported.[^15]",
+        "evidence": [{"source_id": source.id, "pages": [14, 15]}],
+    }
+    fake = FakeCompiledAgent([invalid])
+    monkeypatch.setattr(agent_module, "create_agent", lambda **_: fake)
+
+    with PageIndex(tmp_path / "pages.sqlite") as index:
+        index.add([source])
+        agent = ReasoningAgent(
+            index=index,
+            sources=[source],
+            model="fake",
+            api_key="secret",
+            base_url=None,
+            max_steps=5,
+        )
+        draft = agent.synthesize(
+            PlannedConcept(
+                slug="load-balancing",
+                title="Load Balancing",
+                type="Concept",
+                description="Load balancing behavior.",
+                search_queries=["load balancing"],
+            ),
+            "English",
+        )
+
+    references = [f"{source.id}#pdf_page:{page}" for page in (14, 15)]
+    assert all(f"[^{reference}]" in draft.body for reference in references)
+    assert all(
+        f"[^{reference}]: {source.id}, page {page}" in draft.body
+        for reference, page in zip(references, (14, 15), strict=True)
+    )
+    assert "[^14]" not in draft.body
+    assert "[^15]" not in draft.body
+
+
 def test_reasoning_agent_forces_responses_api_without_storage(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

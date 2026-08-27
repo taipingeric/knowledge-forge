@@ -296,6 +296,7 @@ def _repair_untyped_citations(draft: ConceptDraft, sources: dict[str, KnowledgeS
     bare_candidates: dict[str, set[str]] = {}
     alias_candidates: dict[str, set[str]] = {}
     declared_references: list[str] = []
+    page_candidates: dict[str, set[str]] = {}
     reference_descriptions: dict[str, str] = {}
     for evidence in draft.evidence:
         source = sources.get(evidence.source_id)
@@ -317,6 +318,8 @@ def _repair_untyped_citations(draft: ConceptDraft, sources: dict[str, KnowledgeS
                 if isinstance(locator, PDFPageLocator)
                 else source.id,
             )
+            if isinstance(locator, PDFPageLocator):
+                page_candidates.setdefault(str(locator.page), set()).add(reference)
         if not references:
             continue
         for reference in references:
@@ -345,11 +348,21 @@ def _repair_untyped_citations(draft: ConceptDraft, sources: dict[str, KnowledgeS
             if label not in bare_candidates and len(references) == 1
         }
     )
+    numeric_labels = {
+        match.group(1) for match in re.finditer(r"\[\^([1-9][0-9]*)\](?!:)", draft.body)
+    }
     repairs.update(
         {
-            str(number): [reference]
-            for number, reference in enumerate(declared_references, start=1)
-            if re.search(rf"\[\^{number}\](?!:)", draft.body)
+            label: [declared_references[int(label) - 1]]
+            for label in numeric_labels
+            if int(label) <= len(declared_references)
+        }
+    )
+    repairs.update(
+        {
+            label: [next(iter(page_candidates[label]))]
+            for label in numeric_labels
+            if int(label) > len(declared_references) and len(page_candidates.get(label, set())) == 1
         }
     )
     body = draft.body
