@@ -132,6 +132,7 @@ def render_concept(
     """Render a Concept draft with generated metadata and PDF Source evidence provenance."""
 
     source_entries: list[dict[str, Any]] = []
+    source_references: set[str] = set()
     for evidence in sorted(draft.evidence, key=lambda item: item.source_id):
         source = sources.get(evidence.source_id)
         if source is None:
@@ -154,9 +155,13 @@ def render_concept(
             if json.dumps(locator.model_dump(mode="json"), sort_keys=True) not in known:
                 raise ValidationFailure(f"Unknown evidence locator in concept {draft.slug}")
             evidence_unit = next(unit for unit in source.evidence if unit.locator == locator)
+            reference_id = source_reference_id(source.source_identity, locator)
+            if reference_id in source_references:
+                continue
+            source_references.add(reference_id)
             source_entries.append(
                 {
-                    "id": source_reference_id(source.source_identity, locator),
+                    "id": reference_id,
                     "resource": source.resource,
                     "content_sha256": source.content_sha256,
                     "evidence_sha256": sha256_text(evidence_unit.text),

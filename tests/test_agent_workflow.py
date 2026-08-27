@@ -22,6 +22,7 @@ from knowledge_forge.models import (
     PlannedConcept,
     SourcePage,
 )
+from knowledge_forge.okf import render_concept, validate_concept
 from knowledge_forge.sources import PageIndex, logical_resource, sha256_text
 from knowledge_forge.timing import ProcessingTimer
 from knowledge_forge.workflow import build_workflow
@@ -520,6 +521,60 @@ def test_synthesis_repairs_numbered_page_citations_outside_evidence_order(
     )
     assert "[^14]" not in draft.body
     assert "[^15]" not in draft.body
+
+
+def test_synthesis_deduplicates_repeated_evidence_references(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = PDFSource(
+        id="mysql.pdf",
+        resource=logical_resource("mysql.pdf"),
+        content_sha256=sha256_text("mysql"),
+        pages=[SourcePage(number=index, text=f"MySQL page {index}.") for index in range(1, 4)],
+    )
+    reference_two = f"{source.id}#pdf_page:2"
+    reference_three = f"{source.id}#pdf_page:3"
+    invalid = {
+        "slug": "mysql-transactions",
+        "title": "MySQL Transactions",
+        "type": "Concept",
+        "description": "Transaction behavior.",
+        "body": (
+            f"# MySQL Transactions\n\nTransactions are atomic.[^{reference_two}] "
+            f"Isolation is configurable.[^{reference_three}]\n\n"
+            f"[^{reference_two}]: MySQL, page 2\n[^{reference_three}]: MySQL, page 3"
+        ),
+        "evidence": [
+            {"source_id": source.id, "pages": [2, 3]},
+            {"source_id": source.id, "pages": [2, 3]},
+        ],
+    }
+    fake = FakeCompiledAgent([invalid])
+    monkeypatch.setattr(agent_module, "create_agent", lambda **_: fake)
+
+    with PageIndex(tmp_path / "pages.sqlite") as index:
+        index.add([source])
+        agent = ReasoningAgent(
+            index=index,
+            sources=[source],
+            model="fake",
+            api_key="secret",
+            base_url=None,
+            max_steps=5,
+        )
+        draft = agent.synthesize(
+            PlannedConcept(
+                slug="mysql-transactions",
+                title="MySQL Transactions",
+                type="Concept",
+                description="Transaction behavior.",
+                search_queries=["transactions"],
+            ),
+            "English",
+        )
+
+    rendered = render_concept(draft, {source.id: source}, "knowledge-forge/test")
+    assert validate_concept(rendered, "concepts/mysql-transactions", {source.id: 3}) == []
 
 
 def test_reasoning_agent_forces_responses_api_without_storage(
