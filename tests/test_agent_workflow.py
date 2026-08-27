@@ -730,8 +730,9 @@ def test_agent_reports_unavailable_model_usage_without_failing(
     assert agent.token_usage == TokenUsage(calls=2)
 
 
+@pytest.mark.parametrize("tool_name", ["search_pages", "search_evidence"])
 def test_agent_recovers_from_invalid_search_query_with_langchain_middleware(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tool_name: str
 ) -> None:
     requests: list[dict[str, object]] = []
     progress: list[str] = []
@@ -745,7 +746,7 @@ def test_agent_recovers_from_invalid_search_query_with_langchain_middleware(
                 json=_responses_payload(
                     [
                         _function_call(
-                            "search_pages",
+                            tool_name,
                             "call_invalid_search",
                             {"query": "storage engine API low-level functions"},
                         )
@@ -766,7 +767,7 @@ def test_agent_recovers_from_invalid_search_query_with_langchain_middleware(
                 json=_responses_payload(
                     [
                         _function_call(
-                            "search_pages",
+                            tool_name,
                             "call_repaired_search",
                             {"query": "storage engine API low level functions"},
                         )

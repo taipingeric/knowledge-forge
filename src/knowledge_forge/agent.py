@@ -353,7 +353,9 @@ class ReasoningAgent:
                     f"Agent step budget exceeded ({self._max_steps} model calls)"
                 )
             middleware: list[Any] = [
-                ToolErrorMiddleware(_recover_invalid_search, tools=["search_pages"])
+                ToolErrorMiddleware(
+                    _recover_invalid_search, tools=["search_pages", "search_evidence"]
+                )
             ]
             if not self._parallel_tool_calls:
                 middleware.insert(0, _serialize_parallel_tool_calls)
