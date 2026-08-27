@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,7 +21,14 @@ from openai import APIError
 from pydantic import BaseModel
 
 from .errors import SearchQueryFailure, ValidationFailure
-from .models import ConceptDraft, ConceptPlan, KnowledgeSource, PlannedConcept, SourceKind
+from .models import (
+    ConceptDraft,
+    ConceptPlan,
+    KnowledgeSource,
+    PDFPageLocator,
+    PlannedConcept,
+    SourceKind,
+)
 from .okf import parse_markdown, render_concept, source_reference_id, validate_concept
 from .sources import EvidenceIndex
 from .tools import (
@@ -282,6 +290,64 @@ Return only the requested structured response through the response tool.
 """
 
 
+def _repair_untyped_citations(draft: ConceptDraft, sources: dict[str, KnowledgeSource]) -> None:
+    """Repair untyped citation labels when declared evidence determines their references."""
+
+    bare_candidates: dict[str, set[str]] = {}
+    alias_candidates: dict[str, set[str]] = {}
+    for evidence in draft.evidence:
+        source = sources.get(evidence.source_id)
+        if source is None:
+            continue
+        page_locators = [PDFPageLocator(page=page) for page in evidence.pages] + [
+            locator for locator in evidence.locators if isinstance(locator, PDFPageLocator)
+        ]
+        locators = page_locators + [
+            locator for locator in evidence.locators if not isinstance(locator, PDFPageLocator)
+        ]
+        references = [source_reference_id(source.source_identity, locator) for locator in locators]
+        if not references:
+            continue
+        bare_candidates.setdefault(source.id, set()).update(references)
+        suffix = Path(source.id).suffix
+        if suffix.casefold() == ".pdf":
+            stem = source.id[: -len(suffix)]
+            for locator in page_locators:
+                label = f"{stem}-{locator.page}{suffix}"
+                if label != source.id:
+                    alias_candidates.setdefault(label, set()).add(
+                        source_reference_id(source.source_identity, locator)
+                    )
+
+    repairs = {
+        label: sorted(references)
+        for label, references in bare_candidates.items()
+        if not alias_candidates.get(label) or alias_candidates[label] == references
+    }
+    repairs.update(
+        {
+            label: [next(iter(references))]
+            for label, references in alias_candidates.items()
+            if label not in bare_candidates and len(references) == 1
+        }
+    )
+    body = draft.body
+    for label, references in repairs.items():
+        if references == [label]:
+            continue
+        replacement = " ".join(f"[^{reference}]" for reference in references)
+        body = re.sub(
+            rf"^\[\^{re.escape(label)}\]:(.*)$",
+            lambda match, references=references: "\n".join(
+                f"[^{reference}]:{match.group(1)}" for reference in references
+            ),
+            body,
+            flags=re.MULTILINE,
+        )
+        body = body.replace(f"[^{label}]", replacement)
+    draft.body = body
+
+
 class ReasoningAgent:
     """Run bounded planning and Concept-synthesis tasks over indexed evidence."""
 
@@ -468,6 +534,7 @@ class ReasoningAgent:
         def validate_draft(draft: ConceptDraft) -> None:
             """Enforce the planned identity and source bounds of a Concept draft."""
 
+            _repair_untyped_citations(draft, self._sources)
             if draft.slug != concept.slug:
                 raise ValueError(
                     f"keep the planned Concept slug {concept.slug!r}, not {draft.slug!r}"

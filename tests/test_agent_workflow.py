@@ -301,6 +301,119 @@ def test_synthesis_repairs_invalid_citation_source_ids(
     assert "must exactly equal a valid Source Reference ID" in fake.prompts[0]
 
 
+@pytest.mark.parametrize("use_typed_locator", [False, True])
+def test_synthesis_repairs_untyped_filename_page_citations(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, use_typed_locator: bool
+) -> None:
+    source = PDFSource(
+        id="high-performance-mysql-proven-strategies-for-running-mysql-at-scale.pdf",
+        resource=logical_resource(
+            "high-performance-mysql-proven-strategies-for-running-mysql-at-scale.pdf"
+        ),
+        content_sha256=sha256_text("mysql"),
+        pages=[SourcePage(number=index, text=f"MySQL page {index}.") for index in range(1, 5)],
+    )
+    invalid = {
+        "slug": "concurrency-control-and-locking",
+        "title": "Concurrency Control and Locking",
+        "type": "Concept",
+        "description": "Locking behavior.",
+        "body": (
+            "# Concurrency Control and Locking\n\n"
+            "Locks coordinate transactions.[^high-performance-mysql-proven-strategies-for-"
+            "running-mysql-at-scale-4.pdf] A page-specific claim also uses the bare source "
+            f"ID.[^{source.id}]\n\n"
+            "[^high-performance-mysql-proven-strategies-for-running-mysql-at-scale-4.pdf]: "
+            f"MySQL, page 4\n[^{source.id}]: MySQL source"
+        ),
+        "evidence": [
+            (
+                {"source_id": source.id, "locators": [{"kind": "pdf_page", "page": 4}]}
+                if use_typed_locator
+                else {"source_id": source.id, "pages": [4]}
+            )
+        ],
+    }
+    fake = FakeCompiledAgent([invalid])
+    monkeypatch.setattr(agent_module, "create_agent", lambda **_: fake)
+
+    with PageIndex(tmp_path / "pages.sqlite") as index:
+        index.add([source])
+        agent = ReasoningAgent(
+            index=index,
+            sources=[source],
+            model="fake",
+            api_key="secret",
+            base_url=None,
+            max_steps=5,
+        )
+        draft = agent.synthesize(
+            PlannedConcept(
+                slug="concurrency-control-and-locking",
+                title="Concurrency Control and Locking",
+                type="Concept",
+                description="Locking behavior.",
+                search_queries=["locking"],
+            ),
+            "English",
+        )
+
+    reference = f"{source.id}#pdf_page:4"
+    assert draft.body.count(f"[^{reference}]") == 4
+    assert f"[^{source.id}]" not in draft.body
+    assert "-4.pdf]" not in draft.body
+
+
+def test_synthesis_expands_untyped_source_citations_across_declared_pages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = PDFSource(
+        id="high-performance-mysql-proven-strategies-for-running-mysql-at-scale-4.pdf",
+        resource=logical_resource(
+            "high-performance-mysql-proven-strategies-for-running-mysql-at-scale-4.pdf"
+        ),
+        content_sha256=sha256_text("mysql"),
+        pages=[SourcePage(number=index, text=f"MySQL page {index}.") for index in range(1, 5)],
+    )
+    invalid = {
+        "slug": "mysql-isolation-levels",
+        "title": "MySQL Isolation Levels",
+        "type": "Concept",
+        "description": "Isolation behavior.",
+        "body": (
+            f"# MySQL Isolation Levels\n\nIsolation rules.[^{source.id}]\n\n[^{source.id}]: MySQL"
+        ),
+        "evidence": [{"source_id": source.id, "pages": [2, 4]}],
+    }
+    fake = FakeCompiledAgent([invalid])
+    monkeypatch.setattr(agent_module, "create_agent", lambda **_: fake)
+
+    with PageIndex(tmp_path / "pages.sqlite") as index:
+        index.add([source])
+        agent = ReasoningAgent(
+            index=index,
+            sources=[source],
+            model="fake",
+            api_key="secret",
+            base_url=None,
+            max_steps=5,
+        )
+        draft = agent.synthesize(
+            PlannedConcept(
+                slug="mysql-isolation-levels",
+                title="MySQL Isolation Levels",
+                type="Concept",
+                description="Isolation behavior.",
+                search_queries=["isolation"],
+            ),
+            "English",
+        )
+
+    references = [f"{source.id}#pdf_page:{page}" for page in (2, 4)]
+    assert all(f"[^{reference}]" in draft.body for reference in references)
+    assert f"[^{source.id}]" not in draft.body
+
+
 def test_reasoning_agent_forces_responses_api_without_storage(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
