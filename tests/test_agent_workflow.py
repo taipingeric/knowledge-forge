@@ -414,6 +414,59 @@ def test_synthesis_expands_untyped_source_citations_across_declared_pages(
     assert f"[^{source.id}]" not in draft.body
 
 
+def test_synthesis_repairs_numbered_citations_using_declared_evidence_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = PDFSource(
+        id="transactions.pdf",
+        resource=logical_resource("transactions.pdf"),
+        content_sha256=sha256_text("transactions"),
+        pages=[
+            SourcePage(number=index, text=f"Transactions page {index}.") for index in range(1, 5)
+        ],
+    )
+    invalid = {
+        "slug": "transactions-mysql",
+        "title": "MySQL Transactions",
+        "type": "Concept",
+        "description": "Transaction behavior.",
+        "body": (
+            "# MySQL Transactions\n\n"
+            "Transactions are atomic.[^1] Isolation is configurable.[^2]\n\n"
+            "[^1]: Transactions, page 2\n[^2]: Transactions, page 4"
+        ),
+        "evidence": [{"source_id": source.id, "pages": [2, 4]}],
+    }
+    fake = FakeCompiledAgent([invalid])
+    monkeypatch.setattr(agent_module, "create_agent", lambda **_: fake)
+
+    with PageIndex(tmp_path / "pages.sqlite") as index:
+        index.add([source])
+        agent = ReasoningAgent(
+            index=index,
+            sources=[source],
+            model="fake",
+            api_key="secret",
+            base_url=None,
+            max_steps=5,
+        )
+        draft = agent.synthesize(
+            PlannedConcept(
+                slug="transactions-mysql",
+                title="MySQL Transactions",
+                type="Concept",
+                description="Transaction behavior.",
+                search_queries=["transactions"],
+            ),
+            "English",
+        )
+
+    references = [f"{source.id}#pdf_page:{page}" for page in (2, 4)]
+    assert all(f"[^{reference}]" in draft.body for reference in references)
+    assert "[^1]" not in draft.body
+    assert "[^2]" not in draft.body
+
+
 def test_reasoning_agent_forces_responses_api_without_storage(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

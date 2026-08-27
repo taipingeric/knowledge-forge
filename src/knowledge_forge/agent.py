@@ -295,6 +295,7 @@ def _repair_untyped_citations(draft: ConceptDraft, sources: dict[str, KnowledgeS
 
     bare_candidates: dict[str, set[str]] = {}
     alias_candidates: dict[str, set[str]] = {}
+    declared_references: list[str] = []
     for evidence in draft.evidence:
         source = sources.get(evidence.source_id)
         if source is None:
@@ -308,6 +309,9 @@ def _repair_untyped_citations(draft: ConceptDraft, sources: dict[str, KnowledgeS
         references = [source_reference_id(source.source_identity, locator) for locator in locators]
         if not references:
             continue
+        for reference in references:
+            if reference not in declared_references:
+                declared_references.append(reference)
         bare_candidates.setdefault(source.id, set()).update(references)
         suffix = Path(source.id).suffix
         if suffix.casefold() == ".pdf":
@@ -329,6 +333,13 @@ def _repair_untyped_citations(draft: ConceptDraft, sources: dict[str, KnowledgeS
             label: [next(iter(references))]
             for label, references in alias_candidates.items()
             if label not in bare_candidates and len(references) == 1
+        }
+    )
+    repairs.update(
+        {
+            str(number): [reference]
+            for number, reference in enumerate(declared_references, start=1)
+            if re.search(rf"^\[\^{number}\]:", draft.body, flags=re.MULTILINE)
         }
     )
     body = draft.body
