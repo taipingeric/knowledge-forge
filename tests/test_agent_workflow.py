@@ -431,9 +431,7 @@ def test_synthesis_repairs_numbered_citations_using_declared_evidence_order(
         "type": "Concept",
         "description": "Transaction behavior.",
         "body": (
-            "# MySQL Transactions\n\n"
-            "Transactions are atomic.[^1] Isolation is configurable.[^2]\n\n"
-            "[^1]: Transactions, page 2\n[^2]: Transactions, page 4"
+            "# MySQL Transactions\n\nTransactions are atomic.[^1] Isolation is configurable.[^2]"
         ),
         "evidence": [{"source_id": source.id, "pages": [2, 4]}],
     }
@@ -463,6 +461,10 @@ def test_synthesis_repairs_numbered_citations_using_declared_evidence_order(
 
     references = [f"{source.id}#pdf_page:{page}" for page in (2, 4)]
     assert all(f"[^{reference}]" in draft.body for reference in references)
+    assert all(
+        f"[^{reference}]: {source.id}, page {page}" in draft.body
+        for reference, page in zip(references, (2, 4), strict=True)
+    )
     assert "[^1]" not in draft.body
     assert "[^2]" not in draft.body
 

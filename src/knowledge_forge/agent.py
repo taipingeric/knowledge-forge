@@ -296,6 +296,7 @@ def _repair_untyped_citations(draft: ConceptDraft, sources: dict[str, KnowledgeS
     bare_candidates: dict[str, set[str]] = {}
     alias_candidates: dict[str, set[str]] = {}
     declared_references: list[str] = []
+    reference_descriptions: dict[str, str] = {}
     for evidence in draft.evidence:
         source = sources.get(evidence.source_id)
         if source is None:
@@ -306,7 +307,16 @@ def _repair_untyped_citations(draft: ConceptDraft, sources: dict[str, KnowledgeS
         locators = page_locators + [
             locator for locator in evidence.locators if not isinstance(locator, PDFPageLocator)
         ]
-        references = [source_reference_id(source.source_identity, locator) for locator in locators]
+        references = []
+        for locator in locators:
+            reference = source_reference_id(source.source_identity, locator)
+            references.append(reference)
+            reference_descriptions.setdefault(
+                reference,
+                f"{source.id}, page {locator.page}"
+                if isinstance(locator, PDFPageLocator)
+                else source.id,
+            )
         if not references:
             continue
         for reference in references:
@@ -339,10 +349,11 @@ def _repair_untyped_citations(draft: ConceptDraft, sources: dict[str, KnowledgeS
         {
             str(number): [reference]
             for number, reference in enumerate(declared_references, start=1)
-            if re.search(rf"^\[\^{number}\]:", draft.body, flags=re.MULTILINE)
+            if re.search(rf"\[\^{number}\](?!:)", draft.body)
         }
     )
     body = draft.body
+    generated_definitions: list[str] = []
     for label, references in repairs.items():
         if references == [label]:
             continue
@@ -356,6 +367,13 @@ def _repair_untyped_citations(draft: ConceptDraft, sources: dict[str, KnowledgeS
             flags=re.MULTILINE,
         )
         body = body.replace(f"[^{label}]", replacement)
+        for reference in references:
+            if not re.search(rf"^\[\^{re.escape(reference)}\]:\s+.+$", body, re.MULTILINE):
+                generated_definitions.append(
+                    f"[^{reference}]: {reference_descriptions.get(reference, reference)}"
+                )
+    if generated_definitions:
+        body = body.rstrip() + "\n\n" + "\n".join(dict.fromkeys(generated_definitions))
     draft.body = body
 
 
